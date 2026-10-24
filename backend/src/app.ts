@@ -95,7 +95,7 @@ async function bootstrap() {
   // ── Plugins ──────────────────────────────────────────────────────────────
 
   await app.register(cors, {
-    origin: config.isProduction ? config.appUrl : true,
+    origin: config.isProduction ? config.appOrigins : true,
     credentials: true,
   });
 
@@ -167,7 +167,7 @@ async function bootstrap() {
 
   const io = new Server(app.server, {
     cors: {
-      origin: config.isProduction ? config.appUrl : '*',
+      origin: config.isProduction ? config.appOrigins : '*',
       credentials: true,
     },
   });

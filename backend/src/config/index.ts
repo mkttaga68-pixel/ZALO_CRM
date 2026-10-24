@@ -59,6 +59,15 @@ function requireSecret(name: string, devFallback: string, value: string | undefi
   return value || devFallback;
 }
 
+/**
+ * APP_URL nhận một hoặc nhiều URL cách nhau dấu phẩy. Cắt dấu / cuối vì trình duyệt
+ * gửi header Origin không bao giờ có dấu / — thừa một ký tự là không khớp, CORS chặn hết.
+ */
+const appUrlList = (envValue('APP_URL') || 'http://localhost:3000')
+  .split(',')
+  .map((u) => u.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
 export const config = {
   port: parseInt(envValue('PORT') || '3000'),
   host: envValue('HOST') || '0.0.0.0',
@@ -67,7 +76,15 @@ export const config = {
   encryptionKey: requireSecret('ENCRYPTION_KEY', DEV_ENC_FALLBACK, envValue('ENCRYPTION_KEY')),
   databaseUrl: envValue('DATABASE_URL') || 'postgresql://crmuser:password@localhost:5432/zalocrm',
   uploadDir: envValue('UPLOAD_DIR') || '/var/lib/zalo-crm/files',
-  appUrl: envValue('APP_URL') || 'http://localhost:3000',
+  /** URL công khai chính — dùng cho link/redirect. Là giá trị ĐẦU TIÊN của APP_URL. */
+  appUrl: appUrlList[0],
+  /**
+   * Mọi origin được phép gọi API và socket. APP_URL nhận nhiều giá trị cách nhau
+   * dấu phẩy để MỘT deploy phục vụ được nhiều đường vào cùng lúc — ví dụ vừa LAN
+   * (http://192.168.1.6:3080) vừa domain công khai qua Cloudflare Tunnel. Trước đây
+   * chỉ nhận một origin nên thêm đường vào thứ hai là đường cũ chết CORS.
+   */
+  appOrigins: appUrlList,
 
   /* --- Object storage (S3-compatible: minio | r2) cho chat attachments ---
    * STORAGE_PROVIDER quyết định hình dạng URL công khai và cách tạo bucket.
