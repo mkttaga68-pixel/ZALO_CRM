@@ -14,6 +14,11 @@ import { readToken } from './index';
 export function connectSocket(): Socket {
   return io({
     transports: ['websocket', 'polling'],
-    auth: { token: readToken() ?? '' },
+    // Dạng HÀM, không phải object tĩnh: socket.io gọi lại MỖI lần kết nối — kể cả
+    // những lần tự nối lại sau khi rớt mạng — nên token luôn là bản mới nhất trong
+    // storage. Object tĩnh chỉ đọc token MỘT lần lúc tạo: token hết hạn hoặc người dùng
+    // đăng nhập lại thì mọi lần nối lại đều bị server từ chối, realtime chết âm thầm
+    // cho tới khi tải lại trang.
+    auth: (cb) => cb({ token: readToken() ?? '' }),
   });
 }
