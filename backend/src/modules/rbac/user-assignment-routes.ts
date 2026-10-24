@@ -10,6 +10,7 @@ import { authMiddleware } from '../auth/auth-middleware.js';
 import { seedDefaultPermissionGroups, migrateLegacyUsersToPermissionGroups } from './seed-default-groups.js';
 import { userHasGrant } from './permission-group-service.js';
 import type { Resource, Action } from './permission-types.js';
+import { config } from '../../config/index.js';
 
 function requireGrant(resource: Resource, action: Action) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
@@ -132,9 +133,16 @@ export async function registerUserAssignmentRoutes(app: FastifyInstance): Promis
 
   // POST /api/v1/admin/rbac/create-test-users — tạo 6 test user (CEO/Manager/Sale Senior/Sale × 2/Marketing)
   // Dùng cho D14-15 e2e test scenario "leader xem KH cấp dưới"
+  //
+  // CHỈ DÀNH CHO DEV/E2E. Mật khẩu mặc định 'Test@1234' nằm trong mã nguồn công khai,
+  // và test-ceo@rbac.local được tạo với role 'admin' + nhóm quyền CEO — gọi nhầm một
+  // lần trên production là để lại một tài khoản toàn quyền ai cũng biết mật khẩu.
   app.post('/api/v1/admin/rbac/create-test-users', {
     preHandler: [authMiddleware, requireGrant('user', 'create')],
   }, async (request, reply) => {
+    if (config.isProduction) {
+      return reply.status(404).send({ error: 'not found' });
+    }
     const user = (request as any).user;
     try {
       // Đảm bảo default groups đã seed
