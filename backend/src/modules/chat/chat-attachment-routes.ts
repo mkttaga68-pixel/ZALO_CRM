@@ -16,7 +16,7 @@ import { zaloPool } from '../zalo/zalo-pool.js';
 import { zaloRateLimiter } from '../zalo/zalo-rate-limiter.js';
 import { zaloOps } from '../../shared/zalo-operations.js';
 import { generateThumbnail, sendNativeVideo } from '../../shared/video-processor.js';
-import { uploadBuffer, type UploadResult } from '../../shared/storage/r2-client.js';
+import { uploadBuffer, type UploadResult } from '../../shared/storage/index.js';
 import { logger } from '../../shared/utils/logger.js';
 
 const IMAGE_MAX = 100 * 1024 * 1024;

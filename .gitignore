@@ -34,3 +34,6 @@ backend/prisma/schema/_*/
 .env
 docker-compose.override.yml
 CAI-DAT-CUC-BO.md
+
+# Ban clone long nhau (tai nan) - khong commit
+/ZL-CRM/

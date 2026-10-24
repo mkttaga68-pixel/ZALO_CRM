@@ -6,7 +6,8 @@
  * do khung chat làm như bình thường — ở đây không có đường gửi nào.
  */
 import { ref, watch } from 'vue';
-import { io, type Socket } from 'socket.io-client';
+import type { Socket } from 'socket.io-client';
+import { connectSocket } from '@/api/socket';
 import { api } from '@/api';
 import { useAuthStore } from '@/stores/auth';
 
@@ -36,7 +37,7 @@ const listeners = new Set<(payload: DraftPush) => void>();
 
 function ensureSocket(orgId: string | undefined) {
   if (socket) return;
-  socket = io({ transports: ['websocket', 'polling'] });
+  socket = connectSocket();
   const join = () => { if (orgId) socket?.emit('org:join', { orgId }); };
   socket.on('connect', join);
   if (socket.connected) join();

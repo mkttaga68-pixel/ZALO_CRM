@@ -11,7 +11,8 @@
  * UI ẩn indicator hoàn toàn (KHÔNG hiển thị "Không rõ").
  */
 import { ref, computed, watch, onUnmounted } from 'vue';
-import { io, type Socket } from 'socket.io-client';
+import type { Socket } from 'socket.io-client';
+import { connectSocket } from '@/api/socket';
 import { api } from '@/api/index';
 import { useAuthStore } from '@/stores/auth';
 
@@ -30,7 +31,7 @@ const subscribers = new Map<string, (event: { accountId: string; onlines: string
 
 function ensureSocket(): Socket {
   if (!socket) {
-    socket = io({ transports: ['websocket', 'polling'] });
+    socket = connectSocket();
     socket.on('connect', () => {
       const auth = useAuthStore();
       const orgId = auth.user?.orgId;

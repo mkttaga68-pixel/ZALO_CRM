@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   app:
     build:
@@ -27,6 +25,10 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      # Bucket phai ton tai truoc khi app nhan request: thieu bucket thi moi upload
+      # anh/file chat deu that bai voi NoSuchBucket.
+      storage-init:
+        condition: service_completed_successfully
     volumes:
       - file_storage:/var/lib/zalo-crm/files
     tmpfs:
@@ -104,30 +106,45 @@ services:
       timeout: 5s
       retries: 3
 
-  minio-init:
-    image: minio/mc:latest
-    container_name: zalo-crm-minio-init
+  # Khoi tao bucket truoc khi app nhan request. Goi dung ensureBucket() cua app
+  # (shared/storage) nen logic tao bucket chi ton tai MOT CHO: provider nao tu tao,
+  # provider nao chi kiem tra, do bang STORAGE_PROFILES quyet dinh.
+  #
+  # Truoc day service nay dung image minio/mc, nhung repo Docker Hub minio/mc da bi
+  # khoa (pull access denied); va entrypoint cu ket thuc bang `exit 0` nen moi loi
+  # deu bi che -> bucket chua bao gio duoc tao ma container van bao thanh cong, lam
+  # moi anh/file chat upload that bai voi NoSuchBucket.
+  storage-init:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: zalo-crm-storage-init
+    restart: "no"
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
-      mc mb --ignore-existing local/${S3_BUCKET:-zalocrm-attachments};
-      mc anonymous set download local/${S3_BUCKET:-zalocrm-attachments};
-      exit 0;
-      "
-    # Anonymous DOWNLOAD on the bucket is intentional: Zalo's CDN fetches
-    # attachment URLs we hand to zca-js. Keys are random UUIDs (see
-    # backend/src/shared/storage/minio-client.ts: `${date}/${randomUUID()}${ext}`)
-    # so listing is disabled and enumeration is infeasible.
-    # Anonymous UPLOAD is NOT enabled — only the backend can write via
-    # access-key auth.
+    env_file:
+      - .env
     environment:
-      # Same hard-fail pattern as minio service — no default credentials.
-      MINIO_ROOT_USER:     "${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}"
-      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}"
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-r2}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_BUCKET: ${S3_BUCKET:-zalocrm-attachments}
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}}"
+    entrypoint:
+      - node
+      - -e
+      - |
+        import('/app/dist/shared/storage/index.js')
+          .then(async (m) => {
+            await m.ensureBucket();
+            console.log('[storage-init] provider=' + m.storage.provider +
+                        ' bucket=' + m.storage.bucket + ' ready');
+          })
+          .catch((e) => {
+            console.error('[storage-init] FAILED:', e.name, e.message);
+            process.exit(1);
+          });
 
   backup:
     image: prodrigestivill/postgres-backup-local

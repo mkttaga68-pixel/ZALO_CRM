@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue';
 import { api } from '@/api/index';
-import { io, Socket } from 'socket.io-client';
+import type { Socket } from 'socket.io-client';
+import { connectSocket } from '@/api/socket';
 import type { Contact } from '@/composables/use-contacts';
 import { useAuthStore } from '@/stores/auth';
 import { applyPendingTags } from '@/composables/use-pending-mutations';
@@ -593,7 +594,7 @@ export function useChat() {
   }
 
   function initSocket() {
-    socket = io({ transports: ['websocket', 'polling'] });
+    socket = connectSocket();
 
     // Join org room — backend now scopes chat events (message/reactions/deleted/typing/
     // status) to `org:<orgId>` instead of broadcasting to every connected client.

@@ -6,6 +6,12 @@
 // SECURITY FIX (A2): JWT_SECRET and ENCRYPTION_KEY must NOT fall back to dev
 // defaults when NODE_ENV=production. Webhook signature forgery / token forgery
 // possible if dev defaults leak to a prod container with missing env vars.
+import {
+  STORAGE_PROFILES,
+  isStorageProviderId,
+  type StorageProviderId,
+} from '../shared/storage/s3-storage.js';
+
 const isProd = process.env.NODE_ENV === 'production';
 
 const DEV_JWT_FALLBACK = 'dev-secret-change-me';
@@ -20,6 +26,23 @@ export function envValue(name: string): string | undefined {
   if (quote === '"' || quote === "'") return trimmed;
   const commentAt = trimmed.search(/\s+#/);
   return (commentAt >= 0 ? trimmed.slice(0, commentAt) : trimmed).trim();
+}
+
+/**
+ * STORAGE_PROVIDER sai chính tả sẽ sinh URL ảnh sai một cách IM LẶNG (chèn/không
+ * chèn tên bucket), nên fail-fast ngay lúc boot thay vì âm thầm fallback.
+ * Mặc định 'r2' = hành vi của code trước khi có adapter, để deploy cũ không đổi.
+ */
+function requireStorageProvider(value: string | undefined): StorageProviderId {
+  const raw = (value || '').trim();
+  if (!raw) return 'r2';
+  if (!isStorageProviderId(raw)) {
+    throw new Error(
+      `[config] FATAL: STORAGE_PROVIDER='${raw}' không hợp lệ. ` +
+        `Giá trị cho phép: ${Object.keys(STORAGE_PROFILES).join(' | ')}.`,
+    );
+  }
+  return raw;
 }
 
 function requireSecret(name: string, devFallback: string, value: string | undefined): string {
@@ -46,13 +69,26 @@ export const config = {
   uploadDir: envValue('UPLOAD_DIR') || '/var/lib/zalo-crm/files',
   appUrl: envValue('APP_URL') || 'http://localhost:3000',
 
-  /* --- S3/MinIO storage for chat attachments --- */
+  /* --- Object storage (S3-compatible: minio | r2) cho chat attachments ---
+   * STORAGE_PROVIDER quyết định hình dạng URL công khai và cách tạo bucket.
+   * Xem shared/storage/s3-storage.ts (bảng STORAGE_PROFILES) để biết khác biệt.
+   * Mặc định 'r2' để deploy đang chạy R2 mà chưa khai biến này không bị đổi hành vi. */
+  storageProvider: requireStorageProvider(envValue('STORAGE_PROVIDER')),
   s3Endpoint: envValue('S3_ENDPOINT') || 'http://localhost:9000',
+  /** Origin công khai, KHÔNG chứa tên bucket — adapter tự ghép theo provider. */
   s3PublicUrl: envValue('S3_PUBLIC_URL') || 'http://localhost:9000',
   s3Bucket: envValue('S3_BUCKET') || 'zalocrm-attachments',
   s3AccessKey: envValue('S3_ACCESS_KEY') || 'minioadmin',
   s3SecretKey: envValue('S3_SECRET_KEY') || 'minioadmin',
-  s3Region: envValue('S3_REGION') || 'us-east-1',
+  /** Rỗng = để profile của provider tự quyết (minio: us-east-1, r2: auto). */
+  s3Region: envValue('S3_REGION') || '',
+  /** Cache-Control max-age (giây) cho object upload. Mặc định 3 ngày. */
+  s3CacheMaxAge: parseInt(envValue('S3_CACHE_MAX_AGE') || '259200'),
+  /** Host/prefix kho cũ còn sót trong DB, phân cách bằng dấu phẩy. */
+  s3LegacyUrlPrefixes: (envValue('S3_LEGACY_URL_PREFIXES') || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
 
   aiDefaultProvider: envValue('AI_DEFAULT_PROVIDER') || 'anthropic',
   aiDefaultModel: envValue('AI_DEFAULT_MODEL') || 'claude-sonnet-4-6',

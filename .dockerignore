@@ -1,0 +1,28 @@
+# Dependencies — luôn cài lại trong container (npm ci).
+# Copy node_modules từ host vào sẽ ghi đè bản sạch và mang binary
+# sai nền tảng (Windows/macOS) vào image Alpine → Prisma engine lỗi.
+node_modules
+**/node_modules
+
+# Build artefacts — sinh lại trong container
+dist
+**/dist
+*.tsbuildinfo
+
+# Secrets & cấu hình runtime: compose nạp .env qua env_file lúc chạy,
+# build không cần, và không nên nằm trong image layer.
+.env
+.env.*
+!.env.example
+
+# VCS & dữ liệu local
+.git
+.gitignore
+backups
+*.log
+npm-debug.log*
+
+# Dev tooling
+.vscode
+.claude
+.idea

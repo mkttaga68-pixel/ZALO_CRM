@@ -10,8 +10,7 @@ import { runAutomationRules } from '../automation/automation-service.js';
 import { applyContactAggregateFromMessage, applyContactInteraction, applyFriendAggregate } from '../contacts/contact-aggregate.js';
 import { onInboundMessage as onInboundScoring, onOutboundMessage as onOutboundScoring } from '../scoring/scoring-hooks.js';
 import { syncReminderFromMessage } from '../contacts/reminder-sync.js';
-import { uploadBuffer } from '../../shared/storage/r2-client.js';
-import { config } from '../../config/index.js';
+import { uploadBuffer, isOwnStorageUrl } from '../../shared/storage/index.js';
 
 export interface IncomingMessage {
   accountId: string;
@@ -82,18 +81,12 @@ function safeParseJsonObject(value: string): Record<string, unknown> | null {
   }
 }
 
-// URL đã nằm trong kho của mình thì không mirror lại (tránh vòng lặp tự sao chép).
-// Nhận cả URL MinIO cũ (host 127.0.0.1:9000, còn trong DB trước 2026-08-13) lẫn
-// URL R2 mới — kho cũ không còn ghi nhưng dữ liệu cũ vẫn chảy qua đây.
-function isLocalStorageUrl(value: string): boolean {
-  if (value.startsWith(`${config.s3PublicUrl}/`)) return true;
-  return value.startsWith(`${config.s3Endpoint}/`) || value.includes('127.0.0.1:9000/');
-}
-
+// Nhận diện URL thuộc kho của mình nằm trong shared/storage (isOwnStorageUrl) để
+// logic này đi theo nơi sinh URL — đổi hạ tầng không phải sửa ở đây nữa.
 function isMirrorableUrl(value: unknown): value is string {
   return typeof value === 'string' &&
     /^https?:\/\//i.test(value) &&
-    !isLocalStorageUrl(value);
+    !isOwnStorageUrl(value);
 }
 
 function fileNameFromUrl(url: string, contentType: string, mimeType: string): string {

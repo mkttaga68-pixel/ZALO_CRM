@@ -13,7 +13,8 @@ import { authMiddleware } from '../auth/auth-middleware.js';
 import { requireZaloAccess } from '../zalo/zalo-access-middleware.js';
 import { zaloOps, ZaloOpError } from '../../shared/zalo-operations.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
-import { config } from '../../config/index.js';
+import { downloadCandidates } from '../../shared/storage/index.js';
+import { socketIdentity } from '../../shared/socket-auth.js';
 import { eventBuffer } from '../../shared/event-buffer.js';
 import { logger } from '../../shared/utils/logger.js';
 import { sendNativeVideo } from '../../shared/video-processor.js';
@@ -167,36 +168,9 @@ function extractZaloMsgId(result: unknown): string {
   return String(raw || '');
 }
 
-function sameOrigin(a: string, b: string): boolean {
-  try {
-    const au = new URL(a);
-    const bu = new URL(b);
-    return au.protocol === bu.protocol && au.host === bu.host;
-  } catch {
-    return false;
-  }
-}
-
-function candidateDownloadUrls(url: string): string[] {
-  const candidates = [url];
-  try {
-    if (sameOrigin(url, config.s3PublicUrl)) {
-      const publicUrl = new URL(config.s3PublicUrl);
-      const endpoint = new URL(config.s3Endpoint);
-      const original = new URL(url);
-      original.protocol = endpoint.protocol;
-      original.host = endpoint.host;
-      const publicPath = publicUrl.pathname.replace(/\/$/, '');
-      if (publicPath && original.pathname.startsWith(publicPath)) {
-        original.pathname = original.pathname.slice(publicPath.length) || '/';
-      }
-      candidates.push(original.toString());
-    }
-  } catch {
-    // keep original only
-  }
-  return [...new Set(candidates)];
-}
+// Việc suy ra URL dự phòng (qua S3_ENDPOINT nội bộ) đã chuyển vào shared/storage
+// dưới tên downloadCandidates — nó là phép nghịch của publicUrlForKey nên phải nằm
+// cùng chỗ với nơi sinh URL, nếu không đổi hạ tầng là hỏng âm thầm.
 
 function filenameFromUrl(url: string, contentType: string, fallback?: string): string {
   const cleanFallback = sanitizeFileName(fallback);
@@ -228,7 +202,7 @@ function extensionForContentType(contentType: string): string {
 
 async function downloadMediaToTemp(media: { url: string; filename?: string }, contentType: string): Promise<{ path: string; cleanup: () => Promise<void> }> {
   let lastError: unknown;
-  for (const url of candidateDownloadUrls(media.url)) {
+  for (const url of downloadCandidates(media.url)) {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -889,9 +863,13 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
 // Socket.IO event handlers for chat operations
 export function registerChatSocketHandlers(io: Server): void {
   io.on('connection', (socket) => {
-    socket.on('chat:typing', (data: { conversationId: string; userId: string; userName: string }) => {
+    // userId lấy từ token, KHÔNG từ payload — trước đây client tự khai userId nên
+    // giả danh người khác đang gõ được. userName vẫn nhận từ client (chỉ để hiển thị).
+    socket.on('chat:typing', (data: { conversationId: string; userName: string }) => {
+      if (!data?.conversationId) return;
       try {
-        eventBuffer.recordTyping(data.conversationId, data.userId, data.userName);
+        const { userId } = socketIdentity(socket);
+        eventBuffer.recordTyping(data.conversationId, userId, data.userName);
       } catch (err) {
         logger.error('[socket] chat:typing error:', err);
       }

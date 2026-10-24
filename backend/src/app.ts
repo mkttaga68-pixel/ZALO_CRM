@@ -27,6 +27,8 @@ import { fileURLToPath } from 'node:url';
 
 import { Prisma } from '@prisma/client';
 import { config } from './config/index.js';
+import { ensureBucket, storage } from './shared/storage/index.js';
+import { registerSocketAuth, socketIdentity } from './shared/socket-auth.js';
 import { prisma } from './shared/database/prisma-client.js';
 import { logger } from './shared/utils/logger.js';
 import { authRoutes } from './modules/auth/auth-routes.js';
@@ -170,6 +172,10 @@ async function bootstrap() {
     },
   });
 
+  // Xác thực handshake TRƯỚC mọi handler 'connection': không có token hợp lệ thì
+  // kết nối bị từ chối, nên handler bên dưới luôn có socketIdentity().
+  registerSocketAuth(io, app);
+
   // Attach io to app so route handlers can emit events
   app.decorate('io', io);
 
@@ -177,7 +183,8 @@ async function bootstrap() {
   zaloPool.setIO(io);
 
   io.on('connection', (socket) => {
-    logger.info(`Socket connected: ${socket.id}`);
+    const { userId, orgId } = socketIdentity(socket);
+    logger.info(`Socket connected: ${socket.id} (user ${userId}, org ${orgId})`);
     socket.on('disconnect', () => {
       logger.debug(`Socket disconnected: ${socket.id}`);
     });
@@ -313,6 +320,19 @@ async function bootstrap() {
     await app.listen({ port: config.port, host: config.host });
     logger.info(`Zalo CRM running on http://${config.host}:${config.port}`);
     logger.info(`Environment: ${config.nodeEnv}`);
+
+    // Kiểm tra kho lưu trữ sau khi đã listen. CHỈ CẢNH BÁO, không chặn boot: storage
+    // chỉ ảnh hưởng tính năng gửi ảnh/file, không nên chặn cả app. Trước đây
+    // ensureBucket() không được gọi ở đâu cả nên bucket thiếu vẫn boot im lặng rồi
+    // chỉ vỡ khi có người gửi ảnh thật (NoSuchBucket).
+    void ensureBucket().then(
+      () => logger.info(`[storage] provider=${storage.provider} bucket=${storage.bucket} OK`),
+      (err: unknown) =>
+        logger.warn(
+          `[storage] provider=${storage.provider} bucket=${storage.bucket} KHÔNG dùng được — ` +
+            `gửi ảnh/file sẽ thất bại: ${(err as Error)?.name} ${(err as Error)?.message}`,
+        ),
+    );
 
     // Graceful shutdown — KEY FIX 2026-06-19: stop Zalo listeners sạch (gửi close frame)
     // trước khi exit để Zalo giải phóng session. Nếu không, container bị SIGKILL đột ngột
