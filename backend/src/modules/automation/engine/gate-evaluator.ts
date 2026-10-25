@@ -16,6 +16,34 @@ import type { BlockActionType } from '../blocks/types.js';
 
 // ── Pure gate functions ───────────────────────────────────────────────────
 
+/**
+ * Consent / opt-out gate (2026-10-25).
+ *
+ * Contact.consentStatus: 'implicit' | 'granted' | 'revoked'. Cột này đã tồn tại
+ * từ lâu nhưng engine CHƯA HỀ đọc — tức automation vẫn gửi cho KH đã yêu cầu
+ * dừng nhận tin. Gate này đóng lỗ đó.
+ *
+ * Chỉ chặn 'revoked'. 'implicit' KHÔNG chặn: đó là mặc định của mọi KH đang có
+ * trong hệ thống, chặn nó sẽ dừng toàn bộ automation đang chạy.
+ *
+ * Áp cho hành động gửi ra ngoài (gửi tin / mời kết bạn). update_status là ghi DB
+ * nội bộ, không liên quan consent.
+ */
+export function checkConsent(
+  actionType: BlockActionType,
+  consentStatus: string | null | undefined,
+): GateResult {
+  if (actionType !== 'send_message' && actionType !== 'request_friend') {
+    return { passed: true };
+  }
+  if (consentStatus !== 'revoked') return { passed: true };
+  return {
+    passed: false,
+    failedGate: 'consent_revoked',
+    detail: 'KH đã opt-out (consentStatus=revoked) — không gửi',
+  };
+}
+
 // Hour range gate — returns retryAfter for next valid window if blocked.
 export function checkHourRange(
   now: Date,

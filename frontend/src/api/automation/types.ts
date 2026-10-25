@@ -114,6 +114,9 @@ export type TriggerEventType =
   | 'friendship_accepted' | 'friendship_received' | 'first_message_received'
   | 'message_received' | 'keyword_match'
   | 'contact_created' | 'contact_status_changed' | 'contact_imported'
+  // Nhân viên chủ động gắn 1 tag CRM cho 1 KH (2026-10-25).
+  // Tag kích hoạt lưu ở eventFilter.crmTagId.
+  | 'crm_tag_added'
   | 'birthday' | 'scheduled_cron' | 'time_elapsed'
   | 'manual_run' | 'order_success';
 

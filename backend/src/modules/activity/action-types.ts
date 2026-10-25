@@ -87,6 +87,13 @@ export const ACTION_CATEGORY: Record<string, ActivityCategory> = {
   bot_score_calc: 'automation',
   bot_status_suggest: 'automation',
   auto_tag_change: 'automation', // Phase 6+ unified auto-tag system (scoring/auto-tag.ts)
+  // CRM tag added → Bot-Auto trigger (2026-10-25). Ghi bởi crm-tag-dispatcher
+  // SAU khi đã quyết định: enrolled = KH đã vào sequence (kèm số task), skipped =
+  // không chạy, `details.reason` nói rõ vì sao (trigger tắt, KH opt-out, không có
+  // nick gửi được...). Timeline KH đọc 2 action này để nhân viên tự giải thích
+  // được "gắn tag xong hệ thống làm gì".
+  crm_tag_sequence_enrolled: 'automation',
+  crm_tag_sequence_skipped: 'automation',
 };
 
 export function categoryOf(action: string): ActivityCategory | null {

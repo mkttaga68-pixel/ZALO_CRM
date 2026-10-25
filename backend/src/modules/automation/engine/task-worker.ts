@@ -20,6 +20,7 @@ import {
   type SequenceRuntimeRules,
 } from './types.js';
 import {
+  checkConsent,
   checkHourRange,
   checkPerNickThrottle,
   checkDailyCap,
@@ -141,7 +142,12 @@ async function processTask(taskId: string): Promise<void> {
           sequence: { select: { id: true, enabled: true, steps: true } },
         },
       },
-      contact: { select: { id: true, acceptedNicksCount: true, lastInboundAt: true, lastOutboundAt: true } },
+      contact: {
+        select: {
+          id: true, acceptedNicksCount: true, lastInboundAt: true, lastOutboundAt: true,
+          consentStatus: true, // gate consent/opt-out (2026-10-25)
+        },
+      },
       block: { select: { id: true, archivedAt: true, actionType: true } },
     },
   });
@@ -172,6 +178,14 @@ async function processTask(taskId: string): Promise<void> {
   const rules = (task.campaign.rulesSnapshot as object) as SequenceRuntimeRules;
   const actionType = task.block.actionType as BlockActionType;
   const now = new Date();
+
+  // 2b. Consent / opt-out (2026-10-25) — chặn vĩnh viễn, không retry: KH đã yêu
+  //     cầu dừng nhận tin thì chờ thêm vài giờ cũng không đổi được gì.
+  const consentCheck = checkConsent(actionType, task.contact.consentStatus);
+  if (!consentCheck.passed) {
+    await markSkipped(taskId, consentCheck.failedGate!, consentCheck.detail);
+    return;
+  }
 
   // 3. Hour range
   const hourCheck = checkHourRange(now, rules);
@@ -211,16 +225,24 @@ async function processTask(taskId: string): Promise<void> {
   //      - request_friend: round-robin across connected nicks, dedup attempts, cap-aware
   let assignedNickId = task.assignedNickId;
   if (!assignedNickId && (actionType === 'request_friend' || actionType === 'send_message')) {
+    // Chính sách chọn nick nằm trong rulesSnapshot (đóng băng từ trigger.ruleOverrides
+    // lúc enroll). Không cấu hình → mode 'auto', đúng hành vi cũ.
     const pick = await pickNickForTask({
       orgId: task.orgId,
       contactId: task.contact.id,
       actionType,
+      nickPolicy: rules.nickPolicy ?? null,
     });
     if (!pick) {
       const reason = actionType === 'send_message'
         ? 'no_friend_nick'
         : 'all_nicks_capped_or_attempted';
       await markSkipped(taskId, reason, 'pickNickForTask returned null');
+      return;
+    }
+    // Nick cố định không khả dụng → bỏ qua kèm lý do cụ thể, KHÔNG tự đổi nick.
+    if (pick.nickId === null) {
+      await markSkipped(taskId, pick.skipReason, `nickPolicy fixed: ${pick.skipReason}`);
       return;
     }
     assignedNickId = pick.nickId;

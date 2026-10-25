@@ -25,6 +25,7 @@ export interface AutomationEvent<T = unknown> {
 // ── Gate evaluation result ────────────────────────────────────────────────
 
 export type GateName =
+  | 'consent_revoked'
   | 'cap_friend_add'
   | 'cap_message'
   | 'hour_range'

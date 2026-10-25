@@ -22,6 +22,7 @@ import { normalizePhone } from '../../shared/utils/phone.js';
 import { logActivity, computeDiff } from '../activity/activity-logger.js';
 import { emitWebhook } from '../api/webhook-service.js';
 import { setPrimaryOwner } from './contact-access.js';
+import { applyContactTagsWithEvents } from './crm-tag-event-service.js';
 
 type QueryParams = Record<string, string>;
 
@@ -572,27 +573,42 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
 
       if (!Array.isArray(tags)) return reply.status(400).send({ error: 'tags must be an array' });
 
-      // Defensive: strip Zalo-mirror tags (🔵 X) trước khi ghi Contact.tags.
-      // Zalo-mirror là per-nick, sống ở Friend.crmTagsPerNick — KHÔNG bao giờ
-      // được phép viết vào Contact.tags (cross-nick) qua endpoint này.
-      const filteredTags = tags.filter(t => typeof t === 'string' && !t.startsWith('🔵 '));
+      // CRM tag added → Bot-Auto trigger (2026-10-25).
+      // Ghi tags + sinh event `crm_tag_added` trong CÙNG transaction, có
+      // SELECT ... FOR UPDATE trên dòng contact. Lý do phải khoá dòng: tag sống
+      // trong Contact.tags (JSONB array tên tag), không có bảng mapping, nên
+      // "đã gắn chưa" phải đọc-so-ghi; hai nhân viên gắn cùng tag cho cùng KH
+      // trong cùng giây mà không khoá sẽ đều thấy "chưa có" → 2 event → KH nhận
+      // tin 2 lần. Việc lọc Zalo-mirror (🔵 X) chuyển vào service, giữ nguyên
+      // hành vi: tag per-nick sống ở Friend.crmTagsPerNick, không bao giờ được
+      // ghi vào Contact.tags qua endpoint này.
+      const applied = await applyContactTagsWithEvents({
+        orgId: user.orgId,
+        contactId: id,
+        nextTags: tags,
+        actorUserId: user.id,
+        source: 'crm_manual',
+      });
+      if (!applied) return reply.status(404).send({ error: 'Contact not found' });
 
-      const existing = await prisma.contact.findFirst({ where: { id, orgId: user.orgId }, select: { id: true, tags: true } });
-      if (!existing) return reply.status(404).send({ error: 'Contact not found' });
+      const { tags: filteredTags, added, removed, events, skipped } = applied;
 
-      const oldTags = Array.isArray(existing.tags) ? (existing.tags as string[]) : [];
-      const updated = await prisma.contact.update({ where: { id }, data: { tags: filteredTags } });
+      // Dispatch SAU KHI transaction commit (yêu cầu Phase 2 item 11). Fire-and-
+      // forget: Zalo lỗi KHÔNG được rollback việc gắn tag, và event đã nằm trong
+      // outbox nên sweeper 60s sẽ lo nếu lần này trượt.
+      if (events.length > 0) {
+        const { dispatchCrmTagEventsSoon } = await import('../automation/engine/crm-tag-dispatcher.js');
+        dispatchCrmTagEventsSoon(events.map(e => e.id));
+      }
 
       // ── ACTIVITY LOG — diff tags added/removed (so với filteredTags vì đó là DB state mới)
-      const added = filteredTags.filter(t => !oldTags.includes(t));
-      const removed = oldTags.filter(t => !filteredTags.includes(t));
       for (const t of added) {
         logActivity({
           orgId: user.orgId,
           userId: user.id,
           action: 'tag_add_crm',
           entityType: 'contact',
-          entityId: updated.id,
+          entityId: id,
           details: { tag: t, level: 'contact' },
         });
       }
@@ -602,7 +618,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           userId: user.id,
           action: 'tag_remove_crm',
           entityType: 'contact',
-          entityId: updated.id,
+          entityId: id,
           details: { tag: t, level: 'contact' },
         });
       }
@@ -610,10 +626,23 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       // ── Phase 6 polish P2 quick win — VIP tag → +intent signal ───────────
       if (added.length > 0) {
         const { onCrmTagsAdded } = await import('../scoring/scoring-hooks.js');
-        onCrmTagsAdded(user.orgId, updated.id, added);
+        onCrmTagsAdded(user.orgId, id, added);
       }
 
-      return updated;
+      // Trả KH sau khi ghi, kèm thông tin tự động hoá để UI nói được "gắn tag
+      // rồi có chạy sequence không, nếu không thì vì sao".
+      const updated = await prisma.contact.findFirst({ where: { id, orgId: user.orgId } });
+      return {
+        ...updated,
+        tags: filteredTags,
+        automation: {
+          // Endpoint này luôn là ĐÚNG 1 KH — hệ thống không có chức năng gắn tag
+          // hàng loạt (xem báo cáo audit), nên không thể gửi lan sang KH khác.
+          contactsAffected: 1,
+          eventsCreated: events.map(e => ({ tag: e.tagName, crmTagId: e.crmTagId, eventId: e.id })),
+          notTriggered: skipped,
+        },
+      };
     } catch (err) {
       logger.error('[contacts] Update tags error:', err);
       return reply.status(500).send({ error: 'Failed to update tags' });

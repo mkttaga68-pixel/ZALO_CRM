@@ -44,6 +44,8 @@ model Organization {
   zaloLabels              ZaloLabel[]
   crmTags                 CrmTag[]
   crmTagGroups            CrmTagGroup[]
+  // CRM tag added → Bot-Auto trigger (2026-10-25) — outbox event
+  crmTagEvents            CrmTagEvent[]
   // Phase 6 — Lead Scoring Engine relations
   scoringConfig           ScoringConfig?
   scoreSignalRules        ScoreSignalRule[]
@@ -158,6 +160,8 @@ model User {
   createdSequences          AutomationSequence[]   @relation("SequenceCreatedBy")
   createdTriggers           AutomationTrigger[]    @relation("TriggerCreatedBy")
   createdBroadcasts         AutomationBroadcast[]  @relation("BroadcastCreatedBy")
+  // CRM tag added → Bot-Auto trigger (2026-10-25) — nhân viên nào gắn tag
+  crmTagEventsActed         CrmTagEvent[]          @relation("CrmTagEventActor")
   // Phase metrics layer 2026-05-22 — phone search by user
   phoneSearchEvents         PhoneSearchEvent[]
   // Phase FB — Facebook Lead Ingestion
@@ -412,6 +416,8 @@ model Contact {
   contactNotes      Note[]
   // Phase 7 — Automation framework
   automationTasks   AutomationTask[]
+  // CRM tag added → Bot-Auto trigger (2026-10-25)
+  crmTagEvents      CrmTagEvent[]
 
   // Per-Contact counters (cache from Friend rows; updated by friend-aggregate hooks)
   acceptedNicksCount Int @default(0) @map("accepted_nicks_count")
@@ -763,6 +769,8 @@ model CrmTag {
 
   org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   group CrmTagGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  // CRM tag added → Bot-Auto trigger (2026-10-25)
+  tagEvents CrmTagEvent[]
 
   @@unique([orgId, name])
   @@unique([sourceZaloLabelId]) // 1 Zalo label → 1 CrmTag mirror
@@ -794,6 +802,75 @@ model CrmTagGroup {
   @@unique([zaloAccountId, managedBy]) // 1 Zalo account chỉ có 1 zalo_sync group
   @@index([orgId, archivedAt])
   @@map("crm_tag_groups")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CRM TAG ADDED → BOT-AUTO TRIGGER (2026-10-25)
+// ═══════════════════════════════════════════════════════════════════════════
+// Outbox durable cho event `crm_tag_added`. 1 row = 1 lần quan hệ (KH × tag)
+// chuyển từ CHƯA GẮN sang ĐÃ GẮN do nhân viên chủ động gắn trong CRM.
+//
+// Vì sao cần bảng này chứ không emit thẳng vào automationEventBus:
+//  1. Contact.tags là Json array TÊN tag — KHÔNG có bảng mapping contact-tag,
+//     nên "chưa gắn → đã gắn" chỉ biết được bằng cách diff array. Diff + ghi tag
+//     + ghi event phải nằm trong CÙNG transaction: nếu không, 2 nhân viên gắn
+//     đồng thời đều thấy "chưa có" và sinh 2 event cho 1 lần chuyển trạng thái
+//     → KH nhận tin 2 lần.
+//  2. automationEventBus là EventEmitter in-memory. App restart đúng lúc tag đã
+//     ghi mà event chưa dispatch = mất event vĩnh viễn, KH không vào sequence.
+//  3. Dispatch dẫn tới gửi tin Zalo. Kết quả có thể KHÔNG XÁC ĐỊNH (timeout).
+//     Phải có chỗ ghi state 'unknown' để KHÔNG tự gửi lại.
+//
+// Luồng:
+//   PUT /contacts/:id/tags
+//     tx { SELECT tags FOR UPDATE → diff → UPDATE tags → INSERT event } COMMIT
+//     → sau commit: dispatcher claim atomic 'pending'→'dispatching'
+//       → automationEventBus.emit('crm_tag_added')
+//       → campaign-materializer (CÓ SẴN) → Campaign + Task
+//       → task-worker (CÓ SẴN) → gates → Zalo SDK
+//
+// CHỈ các đường nhân viên chủ động gắn tag ghi vào bảng này. Đồng bộ Zalo Native,
+// backfill, import, rename/xoá tag, merge KH đều KHÔNG ghi (xem audit Phase 1).
+model CrmTagEvent {
+  id        String @id @default(uuid())
+  orgId     String @map("org_id")
+  contactId String @map("contact_id")
+  crmTagId  String @map("crm_tag_id")
+  // Snapshot tên tag lúc gắn — timeline vẫn đọc được dù tag bị rename/xoá sau.
+  tagName   String @map("tag_name")
+  // Ai gắn. Nullable để không phải migrate nếu sau này có nguồn hệ thống.
+  actorUserId String?  @map("actor_user_id")
+  // Nguồn sinh event. CHỈ 'crm_manual' được dispatch; giá trị khác ghi-mà-không-gửi.
+  source      String   @default("crm_manual")
+  occurredAt  DateTime @map("occurred_at")
+
+  // pending → dispatching → done | skipped | failed | unknown
+  //   skipped : có lý do an toàn (trigger tắt, consent revoked, không có nick...)
+  //   unknown : dispatch không rõ kết quả → KHÔNG tự retry, chờ người xử lý
+  state        String    @default("pending")
+  attemptCount Int       @default(0) @map("attempt_count")
+  claimedAt    DateTime? @map("claimed_at")
+  dispatchedAt DateTime? @map("dispatched_at")
+  // { triggersMatched, campaignsCreated, tasksEnqueued, skipReasons[] }
+  result       Json?
+  lastError    String?   @map("last_error")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  crmTag  CrmTag       @relation(fields: [crmTagId], references: [id], onDelete: Cascade)
+  actor   User?        @relation("CrmTagEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  // Dispatcher pickup: pending cũ nhất trước.
+  @@index([state, occurredAt])
+  // Timeline KH + màn hình nghiệm thu.
+  @@index([contactId, occurredAt(sort: Desc)])
+  @@index([orgId, crmTagId, occurredAt(sort: Desc)])
+  // Partial unique "tối đa 1 event đang bay / (KH × tag)" nằm ở migration SQL —
+  // Prisma không hỗ trợ index có WHERE (precedent: 20260522000000_rbac_partial_unique).
+  @@map("crm_tag_events")
 }
 
 // Per-user preferences (timeline filter, UI toggles, ...).

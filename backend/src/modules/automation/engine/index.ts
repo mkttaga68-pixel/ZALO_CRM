@@ -12,6 +12,7 @@ import { automationEventBus } from './event-bus.js';
 import { materializeFromEvent } from './campaign-materializer.js';
 import { startTaskWorker } from './task-worker.js';
 import { registerActionHandler } from './action-dispatcher.js';
+import { startCrmTagEventSweeper } from './crm-tag-dispatcher.js';
 import {
   requestFriendHandler,
   sendMessageHandler,
@@ -54,7 +55,13 @@ export function startAutomationEngine(): void {
     }
   })();
 
-  logger.info('[automation.engine] started — event bus + 3 action handlers + worker + cron');
+  // 5. Outbox sweeper cho event `crm_tag_added` (2026-10-25).
+  //    Event được ghi vào crm_tag_events cùng transaction với việc gắn tag; route
+  //    dispatch ngay sau commit. Sweeper là lớp bền: bắt event còn 'pending' do
+  //    process restart giữa đường, và thu hồi event treo ở 'dispatching'.
+  startCrmTagEventSweeper();
+
+  logger.info('[automation.engine] started — event bus + 3 action handlers + worker + cron + crm-tag sweeper');
 }
 
 export { automationEventBus } from './event-bus.js';

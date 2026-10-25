@@ -199,6 +199,23 @@
             </select>
           </div>
 
+          <!-- ─── Tag CRM kích hoạt — chỉ cho event crm_tag_added ─── -->
+          <div v-if="draft.eventType === 'crm_tag_added'" class="form-field">
+            <label class="form-label">Tag CRM kích hoạt <span class="form-req">*</span></label>
+            <select v-model="draft.crmTagId" class="at-input">
+              <option :value="null">— Chọn tag CRM —</option>
+              <option v-for="t in crmTagOptions" :key="t.value" :value="t.value">{{ t.title }}</option>
+            </select>
+            <p class="at-caption form-hint">
+              Chỉ khách được gắn ĐÚNG tag này mới vào sequence. Các khách khác đang có
+              cùng tag từ trước <strong>không</strong> bị gửi.
+            </p>
+            <p v-if="crmTagOptions.length === 0" class="at-caption form-hint">
+              Chưa có tag CRM nào dùng được. Tag do Zalo quản lý (đồng bộ) không dùng
+              làm tag kích hoạt — tạo tag CRM riêng ở Cài đặt → Tag CRM.
+            </p>
+          </div>
+
           <div class="form-field">
             <label class="form-label">Bind tới gì khi event fire</label>
             <select v-model="draft.bindingKind" class="at-input">
@@ -244,6 +261,57 @@
             </div>
           </div>
 
+          <!-- ─── Chính sách chọn nick Zalo — cho event crm_tag_added ─── -->
+          <div v-if="draft.eventType === 'crm_tag_added'" class="form-field">
+            <label class="form-label">Chính sách chọn nick Zalo</label>
+            <select v-model="draft.nickMode" class="at-input">
+              <option value="auto">Tự chọn — nick nào đang là bạn với khách thì gửi</option>
+              <option value="fixed">Cố định 1 nick — nick đó không gửi được thì BỎ QUA</option>
+            </select>
+            <div v-if="draft.nickMode === 'fixed'" style="margin-top: 8px;">
+              <select v-model="draft.fixedNickId" class="at-input">
+                <option :value="null">— Chọn nick gửi —</option>
+                <option v-for="n in nickOptions" :key="n.value" :value="n.value">{{ n.title }}</option>
+              </select>
+              <p class="at-caption form-hint">
+                Nick offline, anh/chị không có quyền dùng, hoặc chưa là bạn với khách →
+                hệ thống <strong>bỏ qua</strong> và ghi lý do vào Timeline khách,
+                <strong>không</strong> tự đổi sang nick khác.
+              </p>
+            </div>
+          </div>
+
+          <!-- ─── Bảng tổng hợp trước khi lưu ─── -->
+          <div v-if="draft.eventType === 'crm_tag_added'" class="summary-box">
+            <div class="summary-box__title">Trigger này sẽ hoạt động như sau</div>
+            <dl class="summary-list">
+              <dt>Tên Trigger</dt>
+              <dd>{{ draft.name.trim() || '—' }}</dd>
+              <dt>Event Type</dt>
+              <dd><code>crm_tag_added</code></dd>
+              <dt>Tag CRM kích hoạt</dt>
+              <dd>{{ selectedCrmTagName || '⚠ chưa chọn' }}</dd>
+              <dt>Sequence sẽ chạy</dt>
+              <dd>{{ selectedSequenceName || '⚠ chưa chọn' }}</dd>
+              <dt>Nick Zalo gửi</dt>
+              <dd>
+                <template v-if="draft.nickMode === 'fixed'">
+                  Cố định: {{ selectedNickName || '⚠ chưa chọn' }} — không tự đổi nick
+                </template>
+                <template v-else>Tự chọn nick đang là bạn với khách</template>
+              </dd>
+              <dt>Chống gửi trùng</dt>
+              <dd>
+                Mỗi lần gắn tag chỉ sinh 1 lần gửi. Gắn lại tag đang có → không gửi.
+                Hai nhân viên gắn cùng lúc → vẫn 1 lần gửi.
+              </dd>
+              <dt>Phạm vi</dt>
+              <dd>Đúng 1 khách vừa được gắn tag. Không gửi cho khách đã có tag từ trước.</dd>
+              <dt>Trạng thái</dt>
+              <dd>{{ draft.enabled ? 'BẬT ngay sau khi lưu' : 'TẮT — bật tay sau khi nghiệm thu' }}</dd>
+            </dl>
+          </div>
+
           <label class="form-toggle">
             <input type="checkbox" v-model="draft.enabled" />
             <span>Bật trigger ngay sau khi lưu</span>
@@ -269,12 +337,16 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
+import { api } from '@/api';
+import { useAuthStore } from '@/stores/auth';
 import { triggersApi, sequencesApi, blocksApi } from '@/api/automation';
 import type {
   AutomationTrigger, TriggerCatalogEntry, AutomationSequence, Block,
   TriggerEventType, TriggerBindingKind, TriggerCategory,
 } from '@/api/automation/types';
 import { CATEGORY_COLOR, iconForEvent } from '@/components/automation/phase7/design-tokens';
+
+const auth = useAuthStore();
 
 const tab = ref<'configured' | 'catalog'>('configured');
 const catalog = ref<TriggerCatalogEntry[]>([]);
@@ -305,8 +377,44 @@ interface Draft {
   broadcastId: string | null;
   enabled: boolean;
   cronExpr: string; // packed into eventFilter.cron when eventType=scheduled_cron
+  // crm_tag_added (2026-10-25) — tag kích hoạt, lưu vào eventFilter.crmTagId.
+  // Dùng ID chứ không dùng tên: đổi tên tag không được làm trigger trỏ sai.
+  crmTagId: string | null;
+  // Chính sách chọn nick, lưu vào ruleOverrides.nickPolicy.
+  nickMode: 'auto' | 'fixed';
+  fixedNickId: string | null;
 }
 const draft = ref<Draft | null>(null);
+
+// Tag CRM + nick Zalo cho editor của crm_tag_added.
+interface CrmTagDef { id: string; name: string; emoji?: string | null; managedBy?: string | null; archivedAt?: string | null; isActive?: boolean }
+interface NickDef { id: string; displayName: string | null; status: string }
+const crmTags = ref<CrmTagDef[]>([]);
+const nicks = ref<NickDef[]>([]);
+
+const crmTagOptions = computed(() =>
+  crmTags.value
+    // Tag do Zalo quản lý bị loại: nguồn sự thật là Zalo, CRM chỉ mirror nên
+    // backend không sinh event cho nhóm này (xem crm-tag-event-service).
+    .filter((t) => t.managedBy !== 'zalo_sync' && !t.archivedAt && t.isActive !== false)
+    .map((t) => ({ value: t.id, title: t.emoji ? `${t.emoji} ${t.name}` : t.name })),
+);
+const nickOptions = computed(() =>
+  nicks.value.map((n) => ({
+    value: n.id,
+    title: `${n.displayName || 'Nick Zalo'}${n.status === 'connected' ? '' : ' (chưa kết nối)'}`,
+  })),
+);
+
+const selectedCrmTagName = computed(() =>
+  crmTagOptions.value.find((t) => t.value === draft.value?.crmTagId)?.title ?? '',
+);
+const selectedSequenceName = computed(() =>
+  sequenceOptions.value.find((s) => s.value === draft.value?.sequenceId)?.title ?? '',
+);
+const selectedNickName = computed(() =>
+  nickOptions.value.find((n) => n.value === draft.value?.fixedNickId)?.title ?? '',
+);
 
 const availableCategories = computed(() => {
   const present = new Set(catalog.value.map((c) => c.category));
@@ -349,16 +457,22 @@ function bindingLabel(b: TriggerBindingKind): string {
 async function loadAll() {
   loading.value = true;
   try {
-    const [cat, conf, seqs, blks] = await Promise.all([
+    // Tag CRM + nick Zalo chỉ cần cho editor của crm_tag_added. Lỗi ở 2 cái này
+    // KHÔNG được làm trắng cả trang trigger → catch riêng, trả mảng rỗng.
+    const [cat, conf, seqs, blks, tagRes, nickRes] = await Promise.all([
       triggersApi.listTriggerCatalog(),
       triggersApi.listTriggers(),
       sequencesApi.listSequences(),
       blocksApi.listBlocks({ limit: 500 }),
+      api.get('/crm-tags').catch(() => ({ data: [] })),
+      api.get('/zalo-accounts').catch(() => ({ data: [] })),
     ]);
     catalog.value = cat;
     configured.value = conf;
     sequences.value = seqs;
     blocks.value = blks;
+    crmTags.value = Array.isArray(tagRes.data) ? tagRes.data : (tagRes.data?.tags ?? []);
+    nicks.value = Array.isArray(nickRes.data) ? nickRes.data : [];
   } finally {
     loading.value = false;
   }
@@ -376,8 +490,12 @@ function openCreateFromCatalog(entry: TriggerCatalogEntry) {
     sequenceId: null,
     blockId: null,
     broadcastId: null,
+    // Trigger mới LUÔN tắt — chỉ bật sau khi nghiệm thu (yêu cầu Phase 5 item 3).
     enabled: false,
     cronExpr: entry.eventType === 'scheduled_cron' ? '0 9 * * 1' : '',
+    crmTagId: null,
+    nickMode: 'auto',
+    fixedNickId: null,
   };
   error.value = '';
   editorOpen.value = true;
@@ -395,9 +513,22 @@ function openEdit(trig: AutomationTrigger) {
     broadcastId: trig.broadcastId,
     enabled: trig.enabled,
     cronExpr: extractCronFromFilter(trig.eventFilter),
+    crmTagId: typeof trig.eventFilter?.crmTagId === 'string' ? trig.eventFilter.crmTagId : null,
+    nickMode: readNickPolicy(trig.ruleOverrides).mode,
+    fixedNickId: readNickPolicy(trig.ruleOverrides).fixedNickId,
   };
   error.value = '';
   editorOpen.value = true;
+}
+
+function readNickPolicy(
+  overrides: Record<string, unknown> | null,
+): { mode: 'auto' | 'fixed'; fixedNickId: string | null } {
+  const p = (overrides?.nickPolicy ?? null) as Record<string, unknown> | null;
+  return {
+    mode: p?.mode === 'fixed' ? 'fixed' : 'auto',
+    fixedNickId: typeof p?.fixedNickId === 'string' ? p.fixedNickId : null,
+  };
 }
 
 function extractCronFromFilter(filter: Record<string, unknown> | null): string {
@@ -421,6 +552,23 @@ async function saveTrigger() {
     return;
   }
 
+  // crm_tag_added: thiếu tag kích hoạt thì trigger không bao giờ khớp event nào
+  // → chặn ngay, đừng để người dùng tưởng đã cấu hình xong.
+  if (draft.value.eventType === 'crm_tag_added') {
+    if (!draft.value.crmTagId) {
+      error.value = 'Phải chọn Tag CRM kích hoạt';
+      return;
+    }
+    if (draft.value.bindingKind === 'sequence' && !draft.value.sequenceId) {
+      error.value = 'Phải chọn Sequence sẽ chạy';
+      return;
+    }
+    if (draft.value.nickMode === 'fixed' && !draft.value.fixedNickId) {
+      error.value = 'Chính sách "cố định 1 nick" cần chọn nick gửi';
+      return;
+    }
+  }
+
   saving.value = true;
   try {
     const payload: Record<string, unknown> = {
@@ -435,6 +583,23 @@ async function saveTrigger() {
     // Pack cron into eventFilter (backend cron-event-scheduler reads from here)
     if (draft.value.eventType === 'scheduled_cron') {
       payload.eventFilter = { cron: draft.value.cronExpr.trim() };
+    }
+    // crm_tag_added: tag kích hoạt vào eventFilter (dispatcher so crmTagId để
+    // chọn trigger), chính sách nick vào ruleOverrides (engine đóng băng vào
+    // rulesSnapshot của campaign lúc enroll).
+    if (draft.value.eventType === 'crm_tag_added') {
+      payload.eventFilter = { crmTagId: draft.value.crmTagId };
+      payload.ruleOverrides = {
+        nickPolicy: draft.value.nickMode === 'fixed'
+          ? {
+              mode: 'fixed',
+              fixedNickId: draft.value.fixedNickId,
+              // Nick cố định phải nằm trong quyền của người cấu hình trigger —
+              // chặn việc automation gửi từ nick mà người này không được dùng.
+              onBehalfOfUserId: auth.user?.id ?? null,
+            }
+          : { mode: 'auto' },
+      };
     }
     if (draft.value.id) await triggersApi.updateTrigger(draft.value.id, payload as any);
     else                await triggersApi.createTrigger(payload as any);
@@ -484,6 +649,37 @@ async function onDelete(trig: AutomationTrigger) {
 
 <style scoped>
 .triggers-view { max-width: 1280px; }
+
+/* Bảng tổng hợp trigger crm_tag_added — đọc trước khi lưu */
+.form-req { color: var(--at-coral); }
+.summary-box {
+  border: 1px solid var(--at-hairline);
+  border-radius: var(--at-r-sm);
+  background: var(--at-surface-soft);
+  padding: var(--at-s-sm);
+}
+.summary-box__title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(0, 0, 0, 0.55);
+  margin-bottom: var(--at-s-xs);
+}
+.summary-list {
+  display: grid;
+  grid-template-columns: 148px 1fr;
+  gap: 4px var(--at-s-sm);
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.summary-list dt { color: rgba(0, 0, 0, 0.55); }
+.summary-list dd { margin: 0; color: rgba(0, 0, 0, 0.82); }
+@media (max-width: 560px) {
+  .summary-list { grid-template-columns: 1fr; gap: 0 0; }
+  .summary-list dt { margin-top: var(--at-s-xs); font-size: 12px; }
+}
 
 .header-actions {
   display: flex;
@@ -753,12 +949,23 @@ async function onDelete(trig: AutomationTrigger) {
   background: var(--at-canvas);
   border-radius: var(--at-r-md);
   overflow: hidden;
+  /* Form cua crm_tag_added (them tag kich hoat + chinh sach nick + bang tong
+     hop) cao hon chieu cao toi da Vuetify cho v-dialog. Khong co flex column +
+     max-height thi card bi co lai va overflow:hidden CAT MAT foot -> khong bam
+     duoc nut Luu/Huy. Head/foot ghim, chi body cuon. */
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
 }
+/* 2 duong ke phan cach head/body/foot cung la flex item cua .editor-card ->
+   mac dinh flex-shrink:1 se lam chung bien mat khi body day. */
+.editor-card > .at-hairline { flex-shrink: 0; }
 .editor-card__head {
   display: flex;
   align-items: center;
   gap: var(--at-s-sm);
   padding: var(--at-s-md);
+  flex-shrink: 0;
 }
 .editor-card__close {
   margin-left: auto;
@@ -775,12 +982,17 @@ async function onDelete(trig: AutomationTrigger) {
   display: flex;
   flex-direction: column;
   gap: var(--at-s-sm);
+  /* min-height:0 bat buoc: flex item mac dinh min-height:auto se khong chiu co
+     lai, overflow-y khi do vo tac dung. */
+  overflow-y: auto;
+  min-height: 0;
 }
 .editor-card__foot {
   padding: var(--at-s-md);
   display: flex;
   justify-content: flex-end;
   gap: var(--at-s-xs);
+  flex-shrink: 0;
 }
 
 .form-field { display: flex; flex-direction: column; gap: 6px; }

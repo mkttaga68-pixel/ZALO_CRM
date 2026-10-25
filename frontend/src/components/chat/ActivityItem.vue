@@ -207,6 +207,21 @@ const detailsLine = computed(() => {
     return `: ${formatInOrgTz(String(d.oldDate), undefined, { dateOnly: true })} → ${formatInOrgTz(String(d.newDate), undefined, { dateOnly: true })}`;
   }
   // Customer update: KHÔNG show inline ở đây — render qua diff-block 2-line bên dưới
+  // CRM tag added → Bot-Auto trigger (2026-10-25).
+  // "Ai gắn" + "lúc nào" đã có ở act-actor / act-time nên ở đây chỉ bổ sung
+  // phần nhân viên không tự đoán được: tag nào, vào kịch bản nào, mấy việc
+  // được xếp hàng, và nếu không chạy thì vì sao.
+  if (action === 'crm_tag_sequence_enrolled') {
+    const chip = d.tag ? tagChipHtml(String(d.tag), false) : '';
+    const seq = d.sequenceName ? ` → <strong>${escape(String(d.sequenceName))}</strong>` : '';
+    const n = typeof d.tasksEnqueued === 'number' ? d.tasksEnqueued : 0;
+    return `: ${chip}${seq} <span class="diff-green">(${n} việc đã xếp hàng gửi)</span>`;
+  }
+  if (action === 'crm_tag_sequence_skipped') {
+    const chip = d.tag ? tagChipHtml(String(d.tag), false) : '';
+    const why = d.reason ? escape(String(d.reason)) : 'không rõ lý do';
+    return `: ${chip} <span class="diff-red">${why}</span>`;
+  }
   // Friend alias change
   if (action === 'friend_alias_change' && (d.old !== undefined || d.new !== undefined)) {
     return `: "${escape(String(d.old || ''))}" → "${escape(String(d.new || ''))}"`;

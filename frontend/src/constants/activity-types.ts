@@ -112,6 +112,9 @@ export const ACTION_META: Record<string, ActionMeta> = {
   bot_score_calc:     { label: 'Bot tính điểm' },
   bot_status_suggest: { label: 'Bot suggest status' },
   auto_tag_change:    { label: 'Cập nhật auto-tag', icon: '🤖' },
+  // CRM tag added → Bot-Auto trigger (2026-10-25)
+  crm_tag_sequence_enrolled: { label: 'Gắn tag → vào kịch bản chăm sóc', icon: '🚀' },
+  crm_tag_sequence_skipped:  { label: 'Gắn tag → KHÔNG chạy kịch bản', icon: '⛔' },
 };
 
 export function categoryOf(action: string, fallback: ActivityCategory = 'system'): ActivityCategory {
@@ -140,6 +143,7 @@ export function categoryOf(action: string, fallback: ActivityCategory = 'system'
     user_deleted_permanently: 'system',
     bot_tag_auto: 'automation', bot_score_calc: 'automation', bot_status_suggest: 'automation',
     auto_tag_change: 'automation',
+    crm_tag_sequence_enrolled: 'automation', crm_tag_sequence_skipped: 'automation',
   };
   return map[action] || fallback;
 }

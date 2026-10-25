@@ -24,6 +24,12 @@ export type TriggerEventType =
   | 'contact_created'        // new Contact row inserted
   | 'contact_status_changed' // Contact.statusId changed
   | 'contact_imported'       // Contact created via /contacts/import (future phase)
+  // CRM tag (2026-10-25) — nhân viên CHỦ ĐỘNG gắn 1 tag CRM cho 1 KH.
+  // Fire đúng 1 lần cho mỗi lần quan hệ (KH × tag) chuyển CHƯA GẮN → ĐÃ GẮN.
+  // KHÔNG fire từ: đồng bộ Zalo Native, backfill, import, rename/xoá tag, merge KH,
+  // hay gắn lại tag đang có. Chọn trigger bằng eventFilter.crmTagId (ID, không phải
+  // tên — tag rename không làm trigger trỏ sai).
+  | 'crm_tag_added'
   // Time-based
   | 'birthday'               // cron: contact's birthday today
   | 'scheduled_cron'         // arbitrary cron expression in triggerConfig
@@ -42,6 +48,7 @@ export const SUPPORTED_EVENT_TYPES: readonly TriggerEventType[] = [
   'contact_created',
   'contact_status_changed',
   'contact_imported',
+  'crm_tag_added',
   'birthday',
   'scheduled_cron',
   'time_elapsed',
@@ -180,6 +187,15 @@ export const TRIGGER_CATALOG: TriggerCatalogEntry[] = [
     description: 'Sau khi import batch xong → auto start friend-add automation',
     recommendedBinding: 'sequence',
     suggestedActionTypes: ['request_friend'],
+  },
+  {
+    eventType: 'crm_tag_added',
+    category: 'general',
+    title: 'KH được gắn Tag CRM',
+    description: 'Nhân viên gắn tag CRM cho 1 khách → CHỈ khách đó vào sequence. '
+      + 'Không gửi cho các khách khác đang có cùng tag.',
+    recommendedBinding: 'sequence',
+    suggestedActionTypes: ['send_message'],
   },
   {
     eventType: 'birthday',

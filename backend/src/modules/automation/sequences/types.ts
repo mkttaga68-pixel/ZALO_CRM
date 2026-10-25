@@ -23,6 +23,21 @@ export interface SequenceRuntimeRules {
   perNickThrottle?: boolean;
   crossNickRecencyDays?: number;
   stopOnAccept?: boolean;
+  /**
+   * Chính sách chọn nick gửi (2026-10-25). Không set → engine tự chọn trong pool
+   * (hành vi cũ). Shape khớp NickPolicy ở engine/nick-selector.ts — khai báo lại
+   * ở đây để file này không phải import engine (giữ nguyên tắc "types không
+   * import prisma" ghi ở đầu file).
+   *
+   * mode 'fixed' + fixedNickId: chỉ gửi từ đúng nick đó; nick không khả dụng thì
+   * BỎ QUA, không tự chuyển nick khác.
+   * onBehalfOfUserId: nick phải nằm trong quyền (chat|admin) của user này.
+   */
+  nickPolicy?: {
+    mode?: 'auto' | 'fixed';
+    fixedNickId?: string | null;
+    onBehalfOfUserId?: string | null;
+  };
 }
 
 // Default runtime rules baked from memory rules:

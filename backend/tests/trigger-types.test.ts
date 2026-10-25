@@ -128,4 +128,15 @@ describe('TRIGGER_CATALOG metadata', () => {
       expect(entry.description.length).toBeGreaterThan(0);
     }
   });
+
+  // CRM tag added → Bot-Auto trigger (2026-10-25)
+  it('crm_tag_added có card "KH được gắn Tag CRM", bind sequence', () => {
+    expect(SUPPORTED_EVENT_TYPES).toContain('crm_tag_added');
+    const entry = TRIGGER_CATALOG.find((e) => e.eventType === 'crm_tag_added');
+    expect(entry).toBeDefined();
+    expect(entry!.title).toBe('KH được gắn Tag CRM');
+    // Nghiệp vụ là chuỗi chăm sóc nhiều bước → phải gợi ý sequence, không phải block.
+    expect(entry!.recommendedBinding).toBe('sequence');
+    expect(entry!.category).toBe('general');
+  });
 });

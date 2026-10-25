@@ -131,6 +131,7 @@ export const EVENT_ICON: Record<string, string> = {
   contact_created:         'mdi-account-plus',
   contact_status_changed:  'mdi-tag-arrow-right',
   contact_imported:        'mdi-database-import',
+  crm_tag_added:           'mdi-tag-plus-outline',
   birthday:                'mdi-cake-variant',
   scheduled_cron:          'mdi-clock-time-eight-outline',
   time_elapsed:            'mdi-timer-sand',
