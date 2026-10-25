@@ -74,6 +74,11 @@
           >{{ syncing ? '↻ Đang làm mới…' : '↻ Làm mới ngay' }}</button>
         </header>
 
+        <div v-if="syncNotice" class="sync-paused-notice">
+          <span>⏸ {{ syncNotice }}</span>
+          <button type="button" class="spn-close" @click="syncNotice = ''" aria-label="Đóng">✕</button>
+        </div>
+
         <FriendsSmartHints :friends="friendsDb" @apply="onApplyHint" />
 
         <FriendsFilterBar
@@ -188,6 +193,9 @@ const {
   fetchFriendsDbAllNicks,
   syncFriendsDb,
 } = useFriends();
+
+// Thông báo khi bấm "Làm mới ngay" nhưng nick đang bị admin tạm dừng đồng bộ.
+const syncNotice = ref('');
 
 const stateRaw = useFriendsState();
 // Expose .value refs together to template via shorthand
@@ -382,6 +390,11 @@ async function onSync() {
   if (result?.cooldown) {
     // Backend từ chối do 5s cooldown — hiện hint nhẹ không cần fetch lại
     console.warn('[FriendsView] sync cooldown:', result.message);
+    return;
+  }
+  if (result?.syncPaused) {
+    // Nick đang bị admin tạm dừng đồng bộ — nói rõ, đừng để user bấm mãi
+    syncNotice.value = result.message;
     return;
   }
   await fetch();
@@ -668,4 +681,31 @@ onMounted(async () => {
 .av-c5 { background: linear-gradient(135deg, #db2777, #be185d); }
 .av-c6 { background: linear-gradient(135deg, #0891b2, #0e7490); }
 .av-c7 { background: linear-gradient(135deg, #ea580c, #c2410c); }
+
+/* Nick đang bị admin tạm dừng đồng bộ */
+.sync-paused-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  background: #fef6e7;
+  border: 1px solid #f3dca8;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #7a5818;
+  line-height: 1.5;
+}
+.sync-paused-notice span { flex: 1; min-width: 0; }
+.spn-close {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: #7a5818;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+.spn-close:hover { background: #f3dca8; }
 </style>

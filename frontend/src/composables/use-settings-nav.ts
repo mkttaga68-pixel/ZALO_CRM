@@ -61,6 +61,8 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'departments', label: 'Sơ đồ tổ chức', icon: '🌳', route: '/settings/rbac/departments', permission: 'admin', aliases: ['phòng ban', 'department', 'tree', 'đội nhóm', 'team'] },
       { id: 'users', label: 'Nhân viên', icon: '👤', route: '/settings/rbac/users', permission: 'admin', aliases: ['user', 'sale', 'nhân sự'] },
       { id: 'permission-groups', label: 'Phân quyền', icon: '🛡', route: '/settings/rbac/permission-groups', permission: 'owner', aliases: ['phân quyền', 'permission', 'role', 'vai trò', 'nhóm quyền'] },
+      // Phase Admin Purge 2026-10-25 — hoàn tác lần đồng bộ danh sách bạn của 1 nhân viên
+      { id: 'data-purge', label: 'Xoá dữ liệu KH đã đồng bộ', icon: '🧹', route: '/settings/org/data-purge', permission: 'admin', aliases: ['xoá dữ liệu', 'xoa du lieu', 'purge', 'dọn rác', 'hoàn tác đồng bộ', 'sync', 'đồng bộ', 'xoá khách hàng'] },
     ],
   },
 

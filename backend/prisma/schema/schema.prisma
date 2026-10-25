@@ -177,6 +177,12 @@ model ZaloAccount {
   orgId           String    @map("org_id")
   ownerUserId     String    @map("owner_user_id")
   zaloUid         String?   @unique @map("zalo_uid")
+  // Giữ lại zaloUid trước khi gỡ nick kiểu purge (purge buộc phải xoá zaloUid vì
+  // cột đó @unique, không cho 2 bản ghi cùng UID). KHÔNG có cột này thì lần quét QR
+  // sau không nhận ra nick cũ → tạo ZaloAccount MỚI và sync lại toàn bộ bạn bè,
+  // nick cũ vẫn giữ Friend row → mỗi KH hiện 2 dòng trùng nhau.
+  // Khi khôi phục: chuyển ngược về zaloUid và xoá cột này.
+  previousZaloUid String?   @map("previous_zalo_uid")
   displayName     String?   @map("display_name")
   avatarUrl       String?   @map("avatar_url")
   phone           String?
@@ -190,6 +196,14 @@ model ZaloAccount {
   privacyMode     String    @default("sub") @map("privacy_mode")
   archivedAt      DateTime? @map("archived_at")
   purged          Boolean   @default(false)
+  // Phase Admin Purge 2026-10-25 — admin xoá dữ liệu KH đã đồng bộ của nick này.
+  // KHÔNG có flag này thì cron 15' + autoSyncOnConnect kéo lại nguyên vẹn trong
+  // vòng 15 phút → lệnh xoá vô nghĩa. syncPaused=true chặn MỌI full-sync
+  // (cron / connect / manual) cho nick; admin bật lại thủ công khi muốn sync tiếp.
+  // KHÔNG liên quan tới kết bạn Zalo — nick vẫn là bạn của KH trên Zalo thật.
+  syncPaused       Boolean   @default(false) @map("sync_paused")
+  syncPausedAt     DateTime? @map("sync_paused_at")
+  syncPausedReason String?   @map("sync_paused_reason")
   createdAt       DateTime  @default(now()) @map("created_at")
 
   org                Organization          @relation(fields: [orgId], references: [id], onDelete: Cascade)
@@ -227,6 +241,8 @@ model ZaloAccount {
   systemNotifyRecipientsAsSender   SystemNotifyRecipient[] @relation("SystemNotifySender")
   systemNotifyRecipientsAsInternal SystemNotifyRecipient[] @relation("SystemNotifyInternalContact")
 
+  // Tra nick cũ theo UID đã lưu mỗi lần quét QR (khôi phục thay vì tạo nick trùng)
+  @@index([previousZaloUid])
   @@map("zalo_accounts")
 }
 
@@ -313,6 +329,17 @@ model Contact {
   leadScore        Int       @default(0) @map("lead_score")
   lastActivity     DateTime? @map("last_activity")
   mergedInto       String?   @map("merged_into")
+  // ── Ẩn khỏi trang Khách hàng (2026-10-25) ────────────────────────────────
+  // Sale "xoá" KH khỏi trang Khách hàng cho đỡ rác. KHÔNG xoá bản ghi: dòng bạn bè,
+  // hội thoại, tin nhắn giữ nguyên nên trang Bạn bè / Tin nhắn không đổi, và trên
+  // Zalo vẫn là bạn bình thường.
+  // Giữ bản ghi còn 1 lợi ích quyết định: friend-sync resolve KH theo zaloGlobalId/
+  // zaloUid, thấy bản ghi vẫn còn nên DÙNG LẠI thay vì tạo mới → KH đã ẩn KHÔNG
+  // hiện lại sau chu kỳ đồng bộ 15 phút. Xoá cứng thì 15 phút sau là mọc lại.
+  // Chỉ các query của trang Khách hàng lọc cột này; chat/resolve-by-keys KHÔNG lọc
+  // để ẩn KH không làm hỏng việc mở hội thoại.
+  hiddenAt         DateTime? @map("hidden_at")
+  hiddenByUserId   String?   @map("hidden_by_user_id") // soft FK -> users.id (ai ẩn)
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
@@ -430,6 +457,8 @@ model Contact {
   engagementDaily ContactEngagementDaily[]
 
   @@unique([orgId, zaloGlobalId])
+  // Trang Khách hàng luôn kèm điều kiện hiddenAt IS NULL → index để không seq scan
+  @@index([orgId, hiddenAt])
   @@index([orgId, phone])
   @@index([orgId, phoneNormalized])
   @@index([orgId, zaloUid])

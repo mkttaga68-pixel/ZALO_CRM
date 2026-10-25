@@ -41,6 +41,7 @@ import { chatAttachmentRoutes } from './modules/chat/chat-attachment-routes.js';
 import { contactRoutes } from './modules/contacts/contact-routes.js';
 import { statusRoutes } from './modules/contacts/status-routes.js';
 import { contactSubResourceRoutes } from './modules/contacts/contact-sub-resource-routes.js';
+import { adminPurgeRoutes } from './modules/contacts/admin-purge-routes.js';
 import { appointmentRoutes } from './modules/contacts/appointment-routes.js';
 import { notesRoutes } from './modules/contacts/notes-routes.js';
 import { startInteractionCron } from './modules/contacts/interaction-cron.js';
@@ -215,6 +216,7 @@ async function bootstrap() {
   await app.register(contactRoutes);
   await app.register(statusRoutes);
   await app.register(contactSubResourceRoutes);
+  await app.register(adminPurgeRoutes);
   await app.register(appointmentRoutes);
   await app.register(notesRoutes);
   await app.register(crmTagRoutes);

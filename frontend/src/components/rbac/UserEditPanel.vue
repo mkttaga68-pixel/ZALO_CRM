@@ -36,6 +36,31 @@
               @blur="saveEmail"
               @keyup.enter="saveEmail"
             />
+            <label class="field-label">Số điện thoại đăng nhập</label>
+            <input
+              v-model="localPhone"
+              class="field-input"
+              placeholder="0912345678 — để trống nếu không dùng"
+              :disabled="!canEditInfo || busy"
+              @blur="savePhone"
+              @keyup.enter="savePhone"
+            />
+            <p class="hint-soft" style="margin-top:4px">
+              Nhân viên có thể đăng nhập bằng SĐT này thay cho email.
+            </p>
+
+            <template v-if="canEditRole">
+              <label class="field-label">Vai trò</label>
+              <select v-model="localRole" class="field-input" :disabled="busy" @change="saveRole">
+                <option value="member">Nhân viên</option>
+                <option value="admin">Quản trị viên</option>
+                <option value="owner">Chủ tổ chức</option>
+              </select>
+              <p class="hint-soft" style="margin-top:4px">
+                Chủ tổ chức có toàn quyền, kể cả xoá nhân viên. Chỉ chủ tổ chức đổi được vai trò.
+              </p>
+            </template>
+
             <div class="info-status-row">
               <span class="role-tag" :class="user?.isActive ? 'role-deputy' : 'role-empty-tag'">
                 {{ user?.isActive ? '🟢 Đang hoạt động' : '⚪ Đã vô hiệu hóa' }}
@@ -44,6 +69,31 @@
                 {{ legacyRoleLabel(user?.role) }}
               </span>
             </div>
+          </section>
+
+          <!-- ── Đặt lại mật khẩu ───────────────── -->
+          <section v-if="canResetPassword" class="section">
+            <h3 class="section-title">Mật khẩu</h3>
+            <label class="field-label">Đặt mật khẩu mới</label>
+            <input
+              v-model="newPassword"
+              type="password"
+              class="field-input"
+              placeholder="Tối thiểu 6 ký tự"
+              :disabled="busy"
+              autocomplete="new-password"
+            />
+            <button
+              class="btn-primary-sm"
+              style="margin-top:8px"
+              :disabled="busy || newPassword.trim().length < 6"
+              @click="savePassword"
+            >
+              🔑 Đặt lại mật khẩu
+            </button>
+            <p class="hint-soft" style="margin-top:6px">
+              Nhân viên sẽ đăng nhập bằng mật khẩu mới ngay. Nhớ báo lại cho họ.
+            </p>
           </section>
 
           <!-- ── Department ──────────────────────── -->
@@ -154,11 +204,84 @@
             <button v-else class="btn-primary-sm" :disabled="busy" @click="confirmReactivate">
               ✓ Kích hoạt lại
             </button>
+
+            <hr class="dz-sep" />
+
+            <p class="danger-desc">
+              <strong>Xoá vĩnh viễn</strong> — gỡ hẳn tài khoản khỏi hệ thống, không khôi phục được.
+              Nick Zalo, ghi chú và kịch bản của họ sẽ được <strong>bàn giao</strong> sang người khác,
+              không mất dữ liệu khách hàng.
+            </p>
+            <button class="btn-danger" :disabled="busy" @click="openDeleteDialog">
+              🗑 Xoá vĩnh viễn khỏi hệ thống
+            </button>
           </section>
         </div>
 
         <p v-if="error" class="panel-error">{{ error }}</p>
       </aside>
+
+      <!-- Hộp xác nhận xoá vĩnh viễn + bàn giao -->
+      <div v-if="deletePreview" class="del-overlay" @click.self="closeDeleteDialog">
+        <div class="del-dialog">
+          <h3 class="del-title">Xoá vĩnh viễn {{ deletePreview.user.fullName || deletePreview.user.email }}?</h3>
+
+          <p class="del-lead">
+            Tài khoản sẽ bị gỡ khỏi hệ thống, <strong>không khôi phục được</strong>.
+          </p>
+
+          <template v-if="deletePreview.blockerTotal > 0">
+            <div class="del-block">
+              <div class="del-block-head">Phải bàn giao trước khi xoá</div>
+              <ul class="del-list">
+                <li v-if="deletePreview.blockers.zaloAccounts">
+                  <strong>{{ deletePreview.blockers.zaloAccounts }}</strong> nick Zalo (kèm KH đang chăm)
+                </li>
+                <li v-if="deletePreview.blockers.notes">
+                  <strong>{{ deletePreview.blockers.notes }}</strong> ghi chú
+                </li>
+                <li v-if="deletePreview.blockers.blocks || deletePreview.blockers.blockFolders">
+                  <strong>{{ deletePreview.blockers.blocks + deletePreview.blockers.blockFolders }}</strong> khối nội dung
+                </li>
+                <li v-if="deletePreview.blockers.sequences || deletePreview.blockers.triggers || deletePreview.blockers.broadcasts">
+                  <strong>{{ deletePreview.blockers.sequences + deletePreview.blockers.triggers + deletePreview.blockers.broadcasts }}</strong>
+                  kịch bản / trigger / chiến dịch
+                </li>
+              </ul>
+            </div>
+
+            <label class="field-label">Bàn giao cho *</label>
+            <select v-model="transferToId" class="field-input" :disabled="busy">
+              <option value="">— Chọn nhân viên nhận —</option>
+              <option v-for="c in deletePreview.transferCandidates" :key="c.id" :value="c.id">
+                {{ c.fullName || c.email }} ({{ legacyRoleLabel(c.role) }})
+              </option>
+            </select>
+            <p v-if="deletePreview.transferCandidates.length === 0" class="del-warn">
+              Không còn nhân viên nào đang hoạt động để nhận bàn giao. Hãy tạo hoặc kích hoạt một
+              tài khoản khác trước.
+            </p>
+          </template>
+          <p v-else class="del-ok">
+            Nhân viên này không sở hữu nick Zalo / ghi chú / kịch bản nào — xoá thẳng được.
+          </p>
+
+          <p v-if="deletePreview.unlinked.assignedContacts || deletePreview.unlinked.appointments" class="del-soft">
+            {{ deletePreview.unlinked.assignedContacts }} KH và
+            {{ deletePreview.unlinked.appointments }} lịch hẹn đang gán cho họ sẽ chuyển thành
+            <em>chưa có người phụ trách</em> — dữ liệu vẫn còn nguyên.
+          </p>
+
+          <p v-if="deleteError" class="del-error">{{ deleteError }}</p>
+
+          <div class="del-actions">
+            <button class="btn-ghost" :disabled="busy" @click="closeDeleteDialog">Huỷ</button>
+            <button class="btn-danger" :disabled="busy || !canConfirmDelete" @click="confirmHardDelete">
+              {{ busy ? 'Đang xoá…' : 'Xoá vĩnh viễn' }}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </Transition>
 </template>
@@ -196,6 +319,24 @@ const error = ref('');
 
 const localFullName = ref('');
 const localEmail = ref('');
+const localPhone = ref('');
+const localRole = ref<'member' | 'admin' | 'owner'>('member');
+const newPassword = ref('');
+
+// Xoá vĩnh viễn + bàn giao
+interface DeletionPreview {
+  user: { id: string; fullName: string; email: string; role: string; isActive: boolean };
+  blockers: {
+    zaloAccounts: number; notes: number; blocks: number; blockFolders: number;
+    sequences: number; triggers: number; broadcasts: number;
+  };
+  blockerTotal: number;
+  unlinked: { assignedContacts: number; appointments: number };
+  transferCandidates: Array<{ id: string; fullName: string; email: string; role: string }>;
+}
+const deletePreview = ref<DeletionPreview | null>(null);
+const transferToId = ref('');
+const deleteError = ref('');
 const deptIdLocal = ref<string>('');
 const deptRoleLocal = ref<'leader' | 'deputy' | 'member'>('member');
 const pgIdLocal = ref<string>('');
@@ -212,6 +353,20 @@ const canEditInfo = computed(() => {
 });
 const canDeactivate = computed(() => {
   return props.currentUserRole === 'owner' && props.user?.id !== props.currentUserId;
+});
+
+// Chỉ chủ tổ chức đổi được vai trò, và không đổi vai trò của chính mình
+// (tránh tự hạ quyền rồi kẹt ngoài hệ thống).
+const canEditRole = computed(
+  () => props.currentUserRole === 'owner' && props.user?.id !== props.currentUserId,
+);
+// Đặt lại mật khẩu: owner/admin — khớp quyền của endpoint BE.
+const canResetPassword = computed(() => ['owner', 'admin'].includes(props.currentUserRole));
+
+const canConfirmDelete = computed(() => {
+  const p = deletePreview.value;
+  if (!p) return false;
+  return p.blockerTotal === 0 || !!transferToId.value;
 });
 
 const flatDepts = computed(() => {
@@ -258,6 +413,12 @@ watch(
     if (!props.open || !props.user) return;
     localFullName.value = props.user.fullName ?? '';
     localEmail.value = props.user.email ?? '';
+    localPhone.value = (props.user as any).phone ?? '';
+    localRole.value = ((props.user.role as any) ?? 'member');
+    newPassword.value = '';
+    deletePreview.value = null;
+    transferToId.value = '';
+    deleteError.value = '';
     deptIdLocal.value = props.user.departmentMember?.departmentId ?? '';
     deptRoleLocal.value = props.user.departmentMember?.deptRole ?? 'member';
     pgIdLocal.value = props.user.permissionGroupId ?? '';
@@ -311,6 +472,105 @@ async function saveEmail() {
   } catch (e: any) {
     error.value = e?.response?.data?.error || 'Lỗi đổi email';
     localEmail.value = props.user.email;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function savePhone() {
+  if (!props.user || !canEditInfo.value) return;
+  const trimmed = localPhone.value.trim();
+  const current = ((props.user as any).phone ?? '') as string;
+  if (trimmed === current) return;
+  busy.value = true;
+  error.value = '';
+  try {
+    // Chuỗi rỗng = gỡ SĐT đăng nhập. BE tự chuẩn hoá 0xxx / +84xxx → 84xxx.
+    await api.put(`/users/${props.user.id}`, { phone: trimmed });
+    emit('changed');
+  } catch (e: any) {
+    error.value = e?.response?.data?.error || 'Lỗi đổi số điện thoại';
+    localPhone.value = current;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function saveRole() {
+  if (!props.user || !canEditRole.value) return;
+  const current = props.user.role;
+  if (localRole.value === current) return;
+  busy.value = true;
+  error.value = '';
+  try {
+    await api.put(`/users/${props.user.id}`, { role: localRole.value });
+    emit('changed');
+  } catch (e: any) {
+    error.value = e?.response?.data?.error || 'Lỗi đổi vai trò';
+    localRole.value = current as any;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function savePassword() {
+  if (!props.user || !canResetPassword.value) return;
+  const pw = newPassword.value.trim();
+  if (pw.length < 6) {
+    error.value = 'Mật khẩu tối thiểu 6 ký tự';
+    return;
+  }
+  busy.value = true;
+  error.value = '';
+  try {
+    await api.put(`/users/${props.user.id}/password`, { password: pw });
+    newPassword.value = '';
+    error.value = '';
+    alert('Đã đặt lại mật khẩu. Nhớ báo mật khẩu mới cho nhân viên.');
+  } catch (e: any) {
+    error.value = e?.response?.data?.error || 'Lỗi đặt lại mật khẩu';
+  } finally {
+    busy.value = false;
+  }
+}
+
+// ── Xoá vĩnh viễn ─────────────────────────────────────────────────────────
+// Luôn hỏi BE trước xem cần bàn giao gì: nick Zalo / ghi chú / kịch bản đều là
+// khoá ngoại bắt buộc, không chuyển chủ thì lệnh xoá sẽ fail.
+async function openDeleteDialog() {
+  if (!props.user) return;
+  busy.value = true;
+  deleteError.value = '';
+  try {
+    const { data } = await api.get(`/users/${props.user.id}/deletion-preview`);
+    deletePreview.value = data.preview;
+    transferToId.value = '';
+  } catch (e: any) {
+    error.value = e?.response?.data?.error || 'Không tải được thông tin xoá';
+  } finally {
+    busy.value = false;
+  }
+}
+
+function closeDeleteDialog() {
+  deletePreview.value = null;
+  transferToId.value = '';
+  deleteError.value = '';
+}
+
+async function confirmHardDelete() {
+  if (!props.user || !canConfirmDelete.value) return;
+  busy.value = true;
+  deleteError.value = '';
+  try {
+    const params = new URLSearchParams({ mode: 'hard' });
+    if (transferToId.value) params.set('transferToUserId', transferToId.value);
+    await api.delete(`/users/${props.user.id}?${params.toString()}`);
+    closeDeleteDialog();
+    emit('changed');
+    emit('close');
+  } catch (e: any) {
+    deleteError.value = e?.response?.data?.error || 'Không xoá được nhân viên';
   } finally {
     busy.value = false;
   }
@@ -483,4 +743,40 @@ function avatarColor(name: string): string {
   color: #0a2e0e;
 }
 .preview-desc { font-size: 11px; color: #41454d; margin: 0; line-height: 1.5; }
+
+/* ── Hộp xác nhận xoá vĩnh viễn ── */
+.dz-sep { border: 0; border-top: 1px solid #f5cdb3; margin: 14px 0 12px; }
+
+.del-overlay {
+  position: fixed; inset: 0; background: rgba(17, 24, 39, 0.45);
+  display: flex; align-items: center; justify-content: center; z-index: 1300;
+}
+.del-dialog {
+  background: white; border-radius: 12px; padding: 20px 22px;
+  width: 460px; max-width: 92vw; max-height: 88vh; overflow-y: auto;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.2);
+}
+.del-title { margin: 0 0 10px; font-size: 16px; font-weight: 700; color: #991b1b; }
+.del-lead { font-size: 13px; color: #1f2937; line-height: 1.6; margin: 0 0 12px; }
+.del-block {
+  background: #fef2f2; border: 1px solid #fecaca;
+  border-radius: 8px; padding: 10px 13px; margin-bottom: 13px;
+}
+.del-block-head {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.6px; color: #991b1b; margin-bottom: 6px;
+}
+.del-list { margin: 0; padding-left: 18px; font-size: 12.5px; color: #7f1d1d; line-height: 1.75; }
+.del-ok {
+  background: #e3ede4; border: 1px solid #c8d8c9; color: #0a2e0e;
+  border-radius: 8px; padding: 9px 12px; font-size: 12.5px;
+  line-height: 1.55; margin: 0 0 13px;
+}
+.del-soft { font-size: 12px; color: #6b7280; line-height: 1.6; margin: 10px 0 0; }
+.del-warn { font-size: 12px; color: #aa2d00; line-height: 1.55; margin: 8px 0 0; }
+.del-error {
+  background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
+  border-radius: 7px; padding: 8px 11px; font-size: 12.5px; margin: 11px 0 0;
+}
+.del-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 </style>

@@ -303,6 +303,14 @@ export function useFriends() {
       if (e.response?.status === 429 && e.response.data?.error === 'cooldown') {
         return { cooldown: true, message: e.response.data.message || 'Vừa đồng bộ xong, thử lại sau' };
       }
+      // Admin đã xoá dữ liệu KH của nick này và tạm dừng đồng bộ → báo rõ lý do,
+      // nếu không user bấm mãi mà danh sách không thay đổi.
+      if (e.response?.status === 409 && e.response.data?.error === 'sync_paused') {
+        return {
+          syncPaused: true,
+          message: e.response.data.message || 'Nick này đang tạm dừng đồng bộ. Liên hệ admin để bật lại.',
+        };
+      }
       console.error('syncFriendsDb failed:', err);
       return null;
     } finally {

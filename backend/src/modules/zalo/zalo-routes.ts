@@ -155,9 +155,20 @@ export async function zaloRoutes(app: FastifyInstance): Promise<void> {
 
       zaloPool.disconnect(id);
       if (purge) {
+        // zaloUid PHẢI về null (cột @unique, không cho bản ghi mới trùng UID),
+        // nhưng GIỮ lại ở previousZaloUid để lần quét QR sau nhận ra đúng nick này
+        // và khôi phục bản ghi cũ. Thiếu bước này thì mỗi lần purge → quét lại sẽ
+        // sinh 1 ZaloAccount mới, nick cũ vẫn ôm nguyên Friend row → KH hiện 2 dòng.
         await prisma.zaloAccount.update({
           where: { id },
-          data: { status: 'disconnected', archivedAt: new Date(), purged: true, sessionData: Prisma.DbNull, zaloUid: null },
+          data: {
+            status: 'disconnected',
+            archivedAt: new Date(),
+            purged: true,
+            sessionData: Prisma.DbNull,
+            previousZaloUid: account.zaloUid ?? undefined,
+            zaloUid: null,
+          },
         });
       } else {
         await prisma.zaloAccount.update({

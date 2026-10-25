@@ -238,6 +238,8 @@ export interface ContactFilters {
   relationshipKindAny?: string;
   dateFrom?: string;
   dateTo?: string;
+  /** '' = KH đang hiện trên trang | 'only' = chỉ KH đã xoá khỏi trang (để khôi phục) */
+  hidden?: '' | 'only';
 }
 
 export const SOURCE_OPTIONS = [
@@ -276,6 +278,7 @@ export function useContacts() {
     relationshipKindAny: '',
     dateFrom: '',
     dateTo: '',
+    hidden: '',
   });
 
   const pagination = reactive({ page: 1, limit: 20 });
@@ -300,6 +303,7 @@ export function useContacts() {
           relationshipKindAny: filters.relationshipKindAny || undefined,
           dateFrom: filters.dateFrom || undefined,
           dateTo: filters.dateTo || undefined,
+          hidden: filters.hidden || undefined,
         },
       });
       contacts.value = res.data.contacts ?? res.data;
@@ -364,6 +368,43 @@ export function useContacts() {
     }
   }
 
+  /**
+   * "Xoá" KH khỏi trang Khách hàng — thực chất là ẩn (set hiddenAt).
+   * Bản ghi KH, dòng bạn bè, hội thoại, tin nhắn GIỮ NGUYÊN: trang Bạn bè và
+   * Tin nhắn không đổi, trên Zalo vẫn là bạn.
+   * Giữ bản ghi cũng là lý do KH đã ẩn không bị đồng bộ 15 phút kéo hiện lại.
+   */
+  async function hideContacts(ids: string[]): Promise<number | null> {
+    if (ids.length === 0) return 0;
+    deleting.value = true;
+    try {
+      const res = await api.post('/contacts/bulk-hide', { contactIds: ids });
+      await fetchContacts();
+      return res.data?.hidden ?? ids.length;
+    } catch (err) {
+      console.error('Failed to hide contacts:', err);
+      return null;
+    } finally {
+      deleting.value = false;
+    }
+  }
+
+  /** Đưa KH đã ẩn trở lại trang Khách hàng. */
+  async function restoreContacts(ids: string[]): Promise<number | null> {
+    if (ids.length === 0) return 0;
+    deleting.value = true;
+    try {
+      const res = await api.post('/contacts/bulk-unhide', { contactIds: ids });
+      await fetchContacts();
+      return res.data?.restored ?? ids.length;
+    } catch (err) {
+      console.error('Failed to restore contacts:', err);
+      return null;
+    } finally {
+      deleting.value = false;
+    }
+  }
+
   function resetFilters() {
     filters.search = '';
     filters.source = '';
@@ -377,6 +418,7 @@ export function useContacts() {
     filters, pagination,
     fetchContacts, fetchContact,
     createContact, updateContact, deleteContact,
+    hideContacts, restoreContacts,
     resetFilters,
   };
 }

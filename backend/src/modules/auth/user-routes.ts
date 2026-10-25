@@ -16,6 +16,8 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from './auth-middleware.js';
 import bcrypt from 'bcryptjs';
+import { normalizePhone } from '../../shared/utils/phone.js';
+import { buildDeletionPreview, deleteUserPermanently } from './user-delete-service.js';
 import { randomUUID } from 'node:crypto';
 import { logger } from '../../shared/utils/logger.js';
 
@@ -43,6 +45,7 @@ export async function userRoutes(app: FastifyInstance) {
         id: true,
         email: true,
         fullName: true,
+        phone: true,
         role: true,
         isActive: true,
         teamId: true,
@@ -118,7 +121,7 @@ export async function userRoutes(app: FastifyInstance) {
       return reply.status(403).send({ error: 'Không có quyền' });
     }
 
-    const { fullName, email, role, teamId, isActive } = request.body as any;
+    const { fullName, email, phone, role, teamId, isActive } = request.body as any;
 
     // Field allowlist by role. Self-edit (non-admin) is restricted to fullName.
     // Admin can edit email + teamId of anyone in their org. Owner adds role + isActive.
@@ -132,6 +135,20 @@ export async function userRoutes(app: FastifyInstance) {
       if (!isAdmin) return reply.status(403).send({ error: 'Không có quyền đổi email' });
       if (isSelf) return reply.status(400).send({ error: 'Không thể đổi email của chính mình' });
       updateData.email = email;
+    }
+
+    // SĐT đăng nhập — lưu dạng chuẩn 84xxxxxxxxx (xem normalizePhone) để khớp
+    // đúng lúc đăng nhập dù nhập 0xxx / +84xxx. Chuỗi rỗng = gỡ SĐT.
+    if (phone !== undefined) {
+      if (!isAdmin) return reply.status(403).send({ error: 'Không có quyền đổi số điện thoại' });
+      const raw = typeof phone === 'string' ? phone.trim() : '';
+      if (raw === '') {
+        updateData.phone = null;
+      } else {
+        const canonical = normalizePhone(raw);
+        if (!canonical) return reply.status(400).send({ error: 'Số điện thoại không hợp lệ' });
+        updateData.phone = canonical;
+      }
     }
 
     if (teamId !== undefined) {
@@ -161,6 +178,7 @@ export async function userRoutes(app: FastifyInstance) {
           id: true,
           email: true,
           fullName: true,
+          phone: true,
           role: true,
           isActive: true,
           teamId: true,
@@ -198,7 +216,23 @@ export async function userRoutes(app: FastifyInstance) {
     return { success: true };
   });
 
-  // DELETE /api/v1/users/:id — deactivate user (owner only)
+  // GET /api/v1/users/:id/deletion-preview — xoá vĩnh viễn sẽ cần bàn giao gì?
+  // Chỉ đọc. Owner only, cùng cấp quyền với lệnh xoá thật.
+  app.get('/api/v1/users/:id/deletion-preview', async (request: FastifyRequest, reply: FastifyReply) => {
+    const currentUser = request.user!;
+    if (currentUser.role !== 'owner') {
+      return reply.status(403).send({ error: 'Chỉ chủ tổ chức có quyền xoá nhân viên' });
+    }
+    const { id } = request.params as { id: string };
+    const preview = await buildDeletionPreview(currentUser.orgId, id);
+    if (!preview) return reply.status(404).send({ error: 'Nhân viên không tồn tại trong tổ chức' });
+    return { preview };
+  });
+
+  // DELETE /api/v1/users/:id — mặc định VÔ HIỆU HOÁ (giữ nguyên hành vi cũ).
+  // ?mode=hard  → XOÁ VĨNH VIỄN, kèm &transferToUserId=... để bàn giao nick Zalo,
+  //               ghi chú, kịch bản sang người khác (xem user-delete-service.ts).
+  // Owner only ở cả 2 chế độ.
   app.delete('/api/v1/users/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     const currentUser = request.user!;
     if (currentUser.role !== 'owner') {
@@ -206,16 +240,43 @@ export async function userRoutes(app: FastifyInstance) {
     }
 
     const { id } = request.params as { id: string };
+    const { mode, transferToUserId } = request.query as { mode?: string; transferToUserId?: string };
+
     if (id === currentUser.id) {
       return reply.status(400).send({ error: 'Không thể xóa chính mình' });
     }
 
-    await prisma.user.update({
-      where: { id, orgId: currentUser.orgId },
-      data: { isActive: false },
+    if (mode !== 'hard') {
+      await prisma.user.update({
+        where: { id, orgId: currentUser.orgId },
+        data: { isActive: false },
+      });
+      return { success: true, mode: 'deactivate' };
+    }
+
+    const res = await deleteUserPermanently({
+      orgId: currentUser.orgId,
+      userId: id,
+      transferToUserId: transferToUserId || null,
+      actor: { id: currentUser.id, email: currentUser.email },
     });
 
-    return { success: true };
+    if (!res.ok) {
+      const messages: Record<string, { code: number; msg: string }> = {
+        not_found: { code: 404, msg: 'Nhân viên không tồn tại trong tổ chức' },
+        self: { code: 400, msg: 'Không thể xoá chính mình' },
+        last_owner: { code: 400, msg: 'Không thể xoá chủ tổ chức cuối cùng' },
+        transfer_required: {
+          code: 400,
+          msg: 'Nhân viên này còn nick Zalo / ghi chú / kịch bản — phải chọn người nhận bàn giao trước khi xoá',
+        },
+        bad_transfer_target: { code: 400, msg: 'Người nhận bàn giao không hợp lệ' },
+      };
+      const m = messages[res.error] ?? { code: 400, msg: 'Không xoá được nhân viên' };
+      return reply.status(m.code).send({ error: m.msg, code: res.error });
+    }
+
+    return { success: true, mode: 'hard', ...res.result };
   });
 
   // Phase Privacy v2 2026-05-23 — admin sửa maxPrivacyNicks per user.

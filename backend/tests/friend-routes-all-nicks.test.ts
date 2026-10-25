@@ -107,6 +107,26 @@ describe('GET /api/v1/friends-db/all-nicks', () => {
     expect(findCall.where.zaloAccountId.in.sort()).toEqual(['za-A', 'za-B', 'za-C']);
   });
 
+  // Hồi quy: nick đã gỡ (archived/purged) KHÔNG được tính vào "Tất cả nick".
+  // Trước fix, 1 nick bị gỡ kiểu purge rồi quét QR lại sinh ZaloAccount thứ 2
+  // giữ nguyên Friend row của nick cũ → mỗi KH hiện 2 dòng cùng 1 Zalo ID,
+  // và sidebar báo "0 nick" trong khi danh sách vẫn ra đủ bạn bè.
+  it('loại nick đã gỡ (archived/purged) khỏi phạm vi', async () => {
+    prismaMock.zaloAccountAccess.findMany.mockResolvedValue([]);
+    prismaMock.zaloAccount.findMany.mockResolvedValue([]);
+
+    await buildApp().inject({ method: 'GET', url: '/api/v1/friends-db/all-nicks' });
+
+    // Nhánh owned
+    const ownedWhere = prismaMock.zaloAccount.findMany.mock.calls[0][0].where;
+    expect(ownedWhere.archivedAt).toBeNull();
+    expect(ownedWhere.purged).toBe(false);
+    // Nhánh ACL cũng phải lọc, nếu không nick gỡ vẫn lọt qua đường được grant
+    const aclWhere = prismaMock.zaloAccountAccess.findMany.mock.calls[0][0].where;
+    expect(aclWhere.zaloAccount.archivedAt).toBeNull();
+    expect(aclWhere.zaloAccount.purged).toBe(false);
+  });
+
   it('applies kind filter when provided', async () => {
     prismaMock.zaloAccountAccess.findMany.mockResolvedValue([{ zaloAccountId: 'za-A' }]);
     prismaMock.zaloAccount.findMany.mockResolvedValue([]);

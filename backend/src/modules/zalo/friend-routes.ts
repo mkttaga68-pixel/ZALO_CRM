@@ -207,12 +207,26 @@ export async function friendRoutes(app: FastifyInstance) {
           message: 'Vừa đồng bộ xong, vui lòng thử lại sau vài giây',
         });
       }
+      // Admin đã xoá dữ liệu KH của nick này và tạm dừng đồng bộ. Báo rõ lý do,
+      // nếu không user sẽ thấy "đồng bộ xong, 0 KH" và bấm lại mãi.
+      if (result.syncPaused) {
+        return reply.status(409).send({
+          error: 'sync_paused',
+          message: 'Nick này đang tạm dừng đồng bộ (admin đã xoá dữ liệu KH đã đồng bộ). Liên hệ admin để bật lại.',
+        });
+      }
       return {
         nickId: accountId,
         nickDisplayName: account.displayName,
         liveFriends: result.friends?.liveCount ?? 0,
         upsertedFriends: result.friends?.upsertedFriends ?? 0,
         createdContacts: result.friends?.createdContacts ?? 0,
+        // Ràng buộc sync: chỉ ghi người chưa có / có đổi. Lần làm mới thứ 2+ mà
+        // danh sách bạn không đổi thì newFriends=updatedFriends=0 và
+        // skippedUnchanged = tổng số bạn — không ghi gì vào DB.
+        newFriends: result.friends?.newFriends ?? 0,
+        updatedFriends: result.friends?.updatedFriends ?? 0,
+        skippedUnchanged: result.friends?.skippedUnchanged ?? 0,
         emittedCount: result.friends?.emittedCount ?? 0,
         aliasesUpdated: result.aliasesUpdated,
         labelsUpdated: result.labelsUpdated,

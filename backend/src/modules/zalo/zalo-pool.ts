@@ -163,13 +163,31 @@ class ZaloAccountPool {
       const ownId = await api.getOwnId();
       instance.zaloUid = ownId;
 
-      // Check if an archived account with the same zaloUid exists — restore it
+      // Nick này đã từng tồn tại trong hệ thống chưa? Nếu có thì KHÔI PHỤC bản ghi cũ,
+      // tuyệt đối không tạo thêm bản ghi thứ 2 cho cùng 1 nick Zalo thật.
+      // Khớp theo 2 đường:
+      //   - zaloUid        : gỡ nick thường (UID còn nguyên)
+      //   - previousZaloUid: gỡ kiểu purge (purge buộc xoá zaloUid vì cột @unique)
+      // Trước đây chỉ khớp zaloUid VÀ loại purged → nick purge không bao giờ khớp
+      // → mỗi lần quét lại sinh 1 nick mới, nick cũ vẫn ôm 1509 Friend row
+      // → mỗi KH hiện 2 dòng trùng nhau trên tab "Tất cả nick".
       const archivedAccount = await prisma.zaloAccount.findFirst({
-        where: { zaloUid: String(ownId), archivedAt: { not: null }, purged: false, id: { not: accountId } },
-        select: { id: true },
+        where: {
+          id: { not: accountId },
+          archivedAt: { not: null },
+          OR: [
+            { zaloUid: String(ownId) },
+            { previousZaloUid: String(ownId) },
+          ],
+        },
+        // Nhiều bản ghi cũ cùng UID (lịch sử purge nhiều lần) → lấy cái gỡ gần nhất
+        orderBy: { archivedAt: 'desc' },
+        select: { id: true, purged: true },
       });
       if (archivedAccount) {
-        logger.info(`[zalo:${accountId}] Found archived account ${archivedAccount.id} with same zaloUid — restoring`);
+        logger.info(
+          `[zalo:${accountId}] Nhận ra nick cũ ${archivedAccount.id} (purged=${archivedAccount.purged}) — khôi phục thay vì tạo nick mới`,
+        );
         // Transfer session to archived account + unarchive
         const currentAccount = await prisma.zaloAccount.findUnique({
           where: { id: accountId },
@@ -181,8 +199,15 @@ class ZaloAccountPool {
             archivedAt: null,
             status: 'connected',
             sessionData: currentAccount?.sessionData ?? undefined,
+            // Trả UID về chỗ cũ + bỏ cờ purge: nick sống lại nguyên vẹn cùng
+            // toàn bộ Friend row đang có, nên không sinh dữ liệu trùng.
             zaloUid: String(ownId),
+            previousZaloUid: null,
+            purged: false,
             lastConnectedAt: new Date(),
+            // syncPaused KHÔNG tự bật lại: nếu admin đã chủ động tạm dừng kèm xoá
+            // dữ liệu KH thì quét QR lại không được âm thầm hút ngược về.
+            // Admin bật lại ở trang "Xoá dữ liệu KH đã đồng bộ".
           },
         });
         // Delete the new empty account

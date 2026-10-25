@@ -71,8 +71,11 @@ export function stopFriendSyncCron(): void {
 
 /** Single cycle: iterate connected accounts sequential with stagger. */
 async function runCronCycle(io: Server | null): Promise<void> {
+  // syncPaused: admin đã xoá dữ liệu KH đã đồng bộ của nick này — loại khỏi cron,
+  // nếu không chu kỳ 15' kế tiếp sẽ hút lại toàn bộ KH vừa xoá.
+  // (syncAccountFully cũng tự gate, filter ở đây để khỏi tốn 1 query/nick mỗi cycle.)
   const accounts = await prisma.zaloAccount.findMany({
-    where: { status: 'connected' },
+    where: { status: 'connected', syncPaused: false },
     select: { id: true, orgId: true, displayName: true },
   });
 

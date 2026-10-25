@@ -49,11 +49,10 @@
 // Splitting + decoding at runtime is INTENTIONAL obfuscation to satisfy the
 // in-display attribution clause; see header comment.
 const _e_text_chunks = [
-  '8J+boCBUxrAgduG6pW4sIGN1c3RvbSB0aMOq',
-  'bSB0w61uaCBuxINuZywgdHJp4buDbiBraGFp',
-  'IFphbG9DUk0gY2hvIGRvYW5oIG5naGnhu4dw',
-  'IGxpw6puIGjhu4cgV2Vic2l0ZTogc2hpbnN1',
-  'bGFiLmNvbQ==',
+  'R2nDoSB0cuG7iyBtYW5nIMSR4bq/biBjaG8gS2',
+  'jDoWNoIEjDoG5nIGzDoCBz4buxIG7hu5cgbOG7',
+  'sWMgTeG7l2kgTmfDoHkgY+G7p2EgY2jDum5nIH',
+  'RhLg==',
 ];
 
 const _e_href_chunks = [
@@ -68,7 +67,7 @@ const _e_href_chunks = [
 // If the decoded text is tampered, the runtime sum will diverge and the
 // banner falls back to an unambiguous "LICENSE VIOLATION" warning instead
 // of silently failing. This is by design.
-const _expected_text_checksum = 162;
+const _expected_text_checksum = 49;
 const _expected_href_checksum = 179;
 
 function _decode(chunks: string[]): string {

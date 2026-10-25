@@ -15,6 +15,9 @@ import { backfillFriendDisplayName } from './backfill-friend-display-name.js';
 import { migrateStatusTable } from './status-migration.js';
 import { computeAggregateDisplay, AGGREGATE_INCLUDE } from './contact-aggregate-display.js';
 import { runAutomationRules } from '../automation/automation-service.js';
+
+/** Trần số KH mỗi lần ẩn/khôi phục — chặn payload khổng lồ làm nghẽn DB. */
+const MAX_BULK_HIDE = 1000;
 import { normalizePhone } from '../../shared/utils/phone.js';
 import { logActivity, computeDiff } from '../activity/activity-logger.js';
 import { emitWebhook } from '../api/webhook-service.js';
@@ -68,9 +71,13 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         relationshipKindAny = '', // CSV: 'friend,pending_friend,...' — match KH có ≥1 Friend kind đó
         dateFrom = '',
         dateTo = '',
+        hidden = '',          // '' = chỉ KH đang hiện | 'only' = chỉ KH đã ẩn (để khôi phục)
       } = request.query as QueryParams;
 
       const where: any = { orgId: user.orgId, mergedInto: null };
+      // Mặc định trang Khách hàng chỉ hiện KH chưa ẩn. hidden=only để xem lại +
+      // khôi phục những KH đã bỏ khỏi trang (dữ liệu vẫn còn nguyên).
+      where.hiddenAt = hidden === 'only' ? { not: null } : null;
       // Model B: mỗi Contact tự nó là "KH Cha"; con = Friend rows. KHÔNG filter parentContactId.
       if (source) where.source = source;
       if (status) where.status = status;
@@ -183,7 +190,9 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/contacts/stats', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
-      const base = { orgId: user.orgId, mergedInto: null };
+      // Khớp bộ lọc của danh sách: KH đã ẩn khỏi trang không được tính vào stats,
+      // nếu không "Tổng KH" sẽ lệch với số dòng thực tế trong bảng.
+      const base = { orgId: user.orgId, mergedInto: null, hiddenAt: null };
       const now = new Date();
       const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const sevenDaysAgo = new Date(now.getTime() - 7 * 86_400_000);
@@ -211,7 +220,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         prisma.friend
           .groupBy({
             by: ['contactId'],
-            where: { orgId: user.orgId, contact: { mergedInto: null } },
+            where: { orgId: user.orgId, contact: { mergedInto: null, hiddenAt: null } },
             _count: { contactId: true },
             having: { contactId: { _count: { gte: 3 } } },
           })
@@ -633,6 +642,103 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       logger.error('[contacts] Delete error:', err);
       return reply.status(500).send({ error: 'Failed to delete contact' });
+    }
+  });
+
+  // ── POST /api/v1/contacts/bulk-hide — "xoá" KH khỏi trang Khách hàng ──────
+  // KHÔNG xoá bản ghi: chỉ set hiddenAt. Dòng bạn bè, hội thoại, tin nhắn giữ
+  // nguyên → trang Bạn bè / Tin nhắn không đổi; trên Zalo vẫn là bạn bình thường.
+  //
+  // Vì sao ẩn thay vì xoá cứng: KH vẫn là bạn trên Zalo nên friend-sync 15 phút
+  // sẽ gặp lại họ. Bản ghi còn thì sync resolve theo zaloGlobalId/zaloUid và DÙNG LẠI
+  // → KH đã ẩn vẫn ẩn. Xoá cứng thì 15 phút sau KH mọc lại, "xoá" thành vô nghĩa.
+  //
+  // Quyền: dùng chung grant contact.delete với DELETE /contacts/:id (ẩn nhẹ hơn xoá,
+  // không cần quyền mạnh hơn).
+  app.post('/api/v1/contacts/bulk-hide', {
+    preHandler: async (request, reply) => {
+      const { requireGrant } = await import('../rbac/rbac-middleware.js');
+      return requireGrant('contact', 'delete')(request, reply);
+    },
+    config: { contentClass: 'mixed', rbacResource: 'contact', rbacAction: 'delete' },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const body = (request.body ?? {}) as { contactIds?: unknown };
+      const ids = Array.isArray(body.contactIds)
+        ? body.contactIds.filter((v): v is string => typeof v === 'string' && v.length > 0)
+        : [];
+      if (ids.length === 0) {
+        return reply.status(400).send({ error: 'Chưa chọn khách hàng nào' });
+      }
+      if (ids.length > MAX_BULK_HIDE) {
+        return reply.status(400).send({ error: `Tối đa ${MAX_BULK_HIDE} KH mỗi lần` });
+      }
+
+      // orgId trong where → id của org khác không bao giờ bị đụng tới (fail-closed).
+      // hiddenAt: null → bấm 2 lần không ghi đè thời điểm ẩn lần đầu.
+      const res = await prisma.contact.updateMany({
+        where: { id: { in: ids }, orgId: user.orgId, hiddenAt: null },
+        data: { hiddenAt: new Date(), hiddenByUserId: user.id },
+      });
+
+      logActivity({
+        orgId: user.orgId,
+        userId: user.id,
+        action: 'contact_hidden_from_page',
+        category: 'system',
+        entityType: 'contact',
+        entityId: ids[0] ?? null,
+        details: { requested: ids.length, hidden: res.count, contactIds: ids.slice(0, 50) },
+      });
+
+      return { success: true, hidden: res.count };
+    } catch (err) {
+      logger.error('[contacts] bulk-hide error:', err);
+      return reply.status(500).send({ error: 'Không ẩn được khách hàng' });
+    }
+  });
+
+  // ── POST /api/v1/contacts/bulk-unhide — khôi phục KH đã ẩn về lại trang ───
+  app.post('/api/v1/contacts/bulk-unhide', {
+    preHandler: async (request, reply) => {
+      const { requireGrant } = await import('../rbac/rbac-middleware.js');
+      return requireGrant('contact', 'delete')(request, reply);
+    },
+    config: { contentClass: 'mixed', rbacResource: 'contact', rbacAction: 'delete' },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const body = (request.body ?? {}) as { contactIds?: unknown };
+      const ids = Array.isArray(body.contactIds)
+        ? body.contactIds.filter((v): v is string => typeof v === 'string' && v.length > 0)
+        : [];
+      if (ids.length === 0) {
+        return reply.status(400).send({ error: 'Chưa chọn khách hàng nào' });
+      }
+      if (ids.length > MAX_BULK_HIDE) {
+        return reply.status(400).send({ error: `Tối đa ${MAX_BULK_HIDE} KH mỗi lần` });
+      }
+
+      const res = await prisma.contact.updateMany({
+        where: { id: { in: ids }, orgId: user.orgId, hiddenAt: { not: null } },
+        data: { hiddenAt: null, hiddenByUserId: null },
+      });
+
+      logActivity({
+        orgId: user.orgId,
+        userId: user.id,
+        action: 'contact_restored_to_page',
+        category: 'system',
+        entityType: 'contact',
+        entityId: ids[0] ?? null,
+        details: { requested: ids.length, restored: res.count, contactIds: ids.slice(0, 50) },
+      });
+
+      return { success: true, restored: res.count };
+    } catch (err) {
+      logger.error('[contacts] bulk-unhide error:', err);
+      return reply.status(500).send({ error: 'Không khôi phục được khách hàng' });
     }
   });
 

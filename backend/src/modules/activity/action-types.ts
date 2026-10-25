@@ -74,6 +74,13 @@ export const ACTION_CATEGORY: Record<string, ActivityCategory> = {
   contact_split: 'system',
   data_import: 'system',
   data_export: 'system',
+  // Phase Admin Purge 2026-10-25 — admin xoá dữ liệu KH đã đồng bộ của 1 nhân viên
+  admin_purge_synced_contacts: 'system',
+  admin_resume_friend_sync: 'system',
+  // Ẩn/khôi phục KH khỏi trang Khách hàng (không xoá bản ghi)
+  contact_hidden_from_page: 'system',
+  contact_restored_to_page: 'system',
+  user_deleted_permanently: 'system',
 
   // automation
   bot_tag_auto: 'automation',

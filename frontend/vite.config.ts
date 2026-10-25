@@ -32,11 +32,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Cho phép đổi cổng backend qua env (mặc định 3000) — tránh xung đột cổng khi
-      // dev nhiều app cùng máy. VD: VITE_API_PROXY_TARGET=http://localhost:3001
-      '/api': process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000',
+      // Mac dinh tro vao cong 3080 (cong Docker backend dang chay tren may)
+      '/api': process.env.VITE_API_PROXY_TARGET || 'http://localhost:3080',
       '/socket.io': {
-        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000',
+        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:3080',
         ws: true,
       },
     },

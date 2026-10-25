@@ -105,10 +105,43 @@
         {{ showAdvanced ? '▾' : '▸' }} Lọc nâng cao
         <span v-if="advancedActiveCount > 0" class="btn-badge">{{ advancedActiveCount }}</span>
       </button>
+      <button
+        class="btn-advanced"
+        :class="{ on: viewingHidden }"
+        :title="viewingHidden ? 'Quay lại danh sách KH đang hiện' : 'Xem KH đã xoá khỏi trang để khôi phục'"
+        @click="toggleHiddenView"
+      >
+        🗂 {{ viewingHidden ? 'Đang xem KH đã xoá' : 'KH đã xoá' }}
+      </button>
       <span class="spacer"></span>
       <button v-if="hasAnyFilter" class="btn-clear" @click="clearAllFilters" title="Xoá tất cả bộ lọc">
         × Xoá lọc
       </button>
+    </div>
+
+    <!-- ════════ Thanh thao tác hàng loạt (hiện khi có KH được chọn) ════════ -->
+    <div v-if="selectedIds.size > 0" class="bulk-bar">
+      <span class="bulk-count">Đã chọn <strong>{{ selectedIds.size }}</strong> KH</span>
+      <button class="bulk-link" @click="clearSelection">Bỏ chọn</button>
+      <span class="spacer"></span>
+      <button
+        v-if="viewingHidden"
+        class="bulk-btn bulk-btn-restore"
+        :disabled="deleting"
+        @click="askRestore([...selectedIds])"
+      >↩ Khôi phục {{ selectedIds.size }} KH về trang</button>
+      <button
+        v-else
+        class="bulk-btn bulk-btn-danger"
+        :disabled="deleting"
+        @click="askHide([...selectedIds])"
+      >🗑 Xoá {{ selectedIds.size }} KH khỏi trang</button>
+    </div>
+
+    <!-- Nhắc ngữ cảnh khi đang xem KH đã xoá -->
+    <div v-if="viewingHidden" class="hidden-notice">
+      🗂 Đang xem <strong>KH đã xoá khỏi trang</strong>. Dữ liệu của họ vẫn còn nguyên —
+      bạn bè, hội thoại, tin nhắn không bị ảnh hưởng. Bấm ↩ để đưa trở lại trang Khách hàng.
     </div>
 
     <!-- Advanced filter panel (collapsible) -->
@@ -165,6 +198,17 @@
       <table class="smax-table">
         <thead>
           <tr>
+            <th class="w-36">
+              <input
+                type="checkbox"
+                class="row-check"
+                :checked="allOnPageSelected"
+                :indeterminate.prop="someOnPageSelected && !allOnPageSelected"
+                :disabled="contacts.length === 0"
+                title="Chọn tất cả KH trong trang"
+                @change="toggleSelectAllOnPage"
+              />
+            </th>
             <th class="w-32"></th>
             <th class="w-40"></th>
             <th class="w-200">Tên CRM / Zalo (KH)</th>
@@ -192,9 +236,19 @@
           <template v-for="contact in contacts" :key="contact.id">
             <tr
               class="master-row"
-              :class="{ open: expandedId === contact.id }"
+              :class="{ open: expandedId === contact.id, picked: selectedIds.has(contact.id) }"
               @click="onRowClick($event, contact.id)"
             >
+              <td>
+                <input
+                  type="checkbox"
+                  class="row-check"
+                  :checked="selectedIds.has(contact.id)"
+                  :title="`Chọn ${contact.crmName || contact.fullName || 'KH'}`"
+                  @click.stop
+                  @change="toggleSelect(contact.id)"
+                />
+              </td>
               <td>
                 <button class="expand-btn" @click.stop="toggleExpand(contact.id)">
                   {{ expandedId === contact.id ? '▾' : '▸' }}
@@ -330,6 +384,18 @@
                   <button class="row-action-btn" @click="goChat(contact)" title="Mở chat">💬</button>
                   <button class="row-action-btn" @click="openDetail(contact)" title="Chi tiết">✎</button>
                   <button class="row-action-btn" @click="onAutomation(contact)" title="Automation">⚡</button>
+                  <button
+                    v-if="viewingHidden"
+                    class="row-action-btn row-action-restore"
+                    title="Khôi phục KH về trang"
+                    @click="askRestore([contact.id])"
+                  >↩</button>
+                  <button
+                    v-else
+                    class="row-action-btn row-action-danger"
+                    title="Xoá KH khỏi trang (không huỷ kết bạn Zalo)"
+                    @click="askHide([contact.id])"
+                  >🗑</button>
                 </div>
               </td>
             </tr>
@@ -491,6 +557,44 @@
       <button class="btn" :disabled="pagination.page >= totalPages" @click="changePage(pagination.page + 1)">Sau →</button>
     </div>
 
+    <!-- ════════ Xác nhận xoá / khôi phục KH khỏi trang ════════ -->
+    <div v-if="confirmAction" class="hide-overlay" @click.self="confirmAction = null">
+      <div class="hide-dialog">
+        <h4 v-if="confirmAction.mode === 'hide'">Xoá {{ confirmAction.ids.length }} KH khỏi trang?</h4>
+        <h4 v-else>Khôi phục {{ confirmAction.ids.length }} KH về trang?</h4>
+
+        <template v-if="confirmAction.mode === 'hide'">
+          <p class="hide-lead">
+            KH sẽ không còn hiện trên trang Khách hàng. <strong>Dữ liệu không bị xoá.</strong>
+          </p>
+          <ul class="hide-points">
+            <li><strong>Không</strong> huỷ kết bạn trên Zalo — vẫn là bạn bình thường</li>
+            <li>Trang <strong>Bạn bè</strong> giữ nguyên, không mất dòng nào</li>
+            <li>Hội thoại và tin nhắn giữ nguyên</li>
+            <li>Đồng bộ 15 phút <strong>không</strong> làm KH hiện lại</li>
+            <li>Khôi phục bất cứ lúc nào qua nút “KH đã xoá”</li>
+          </ul>
+        </template>
+        <p v-else class="hide-lead">
+          KH sẽ hiện trở lại trên trang Khách hàng như cũ.
+        </p>
+
+        <div v-if="confirmError" class="hide-error">{{ confirmError }}</div>
+
+        <div class="hide-actions">
+          <button class="btn" :disabled="deleting" @click="confirmAction = null">Huỷ</button>
+          <button
+            class="btn"
+            :class="confirmAction.mode === 'hide' ? 'btn-danger' : 'btn-primary-solid'"
+            :disabled="deleting"
+            @click="runConfirmAction"
+          >
+            {{ deleting ? 'Đang xử lý…' : (confirmAction.mode === 'hide' ? 'Xoá khỏi trang' : 'Khôi phục') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Dialogs (giữ nguyên) -->
     <ContactDetailDialog v-model="showDialog" :contact="selectedContact" @saved="onSaved" @deleted="onDeleted" />
     <ParentCandidateDialog v-model="showCandidateDialog" @resolved="onCandidateResolved" />
@@ -542,9 +646,95 @@ import { useFriendSocket, type FriendUpdatedPayload } from '@/composables/use-fr
 const { isMobile } = useMobile();
 const router = useRouter();
 
-const { contacts, total, loading, filters, pagination, fetchContacts } = useContacts();
+const {
+  contacts, total, loading, deleting, filters, pagination,
+  fetchContacts, hideContacts, restoreContacts,
+} = useContacts();
 const { duplicateTotal, fetchDuplicateGroups } = useContactIntelligence();
 const toast = useToast();
+
+// ── Xoá KH khỏi trang (ẩn, KHÔNG xoá dữ liệu) ──────────────────────────────
+// Chọn nhiều dòng bằng ô tích rồi xoá hàng loạt, hoặc xoá từng dòng bằng nút 🗑.
+// "Xoá" ở đây = bỏ khỏi trang Khách hàng. Dòng bạn bè / hội thoại / tin nhắn giữ
+// nguyên, và trên Zalo vẫn là bạn — xem bulk-hide ở contact-routes.ts.
+const selectedIds = ref<Set<string>>(new Set());
+const confirmAction = ref<{ mode: 'hide' | 'restore'; ids: string[] } | null>(null);
+const confirmError = ref('');
+
+/** Đang xem danh sách KH đã xoá khỏi trang (để khôi phục). */
+const viewingHidden = computed(() => filters.hidden === 'only');
+
+const allOnPageSelected = computed(
+  () => contacts.value.length > 0 && contacts.value.every((c) => selectedIds.value.has(c.id)),
+);
+const someOnPageSelected = computed(() => contacts.value.some((c) => selectedIds.value.has(c.id)));
+
+function toggleSelect(id: string) {
+  // Gán Set mới để Vue nhận ra thay đổi (mutate tại chỗ không kích hoạt reactivity)
+  const next = new Set(selectedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  selectedIds.value = next;
+}
+
+function toggleSelectAllOnPage() {
+  const next = new Set(selectedIds.value);
+  if (allOnPageSelected.value) {
+    for (const c of contacts.value) next.delete(c.id);
+  } else {
+    for (const c of contacts.value) next.add(c.id);
+  }
+  selectedIds.value = next;
+}
+
+function clearSelection() {
+  selectedIds.value = new Set();
+}
+
+function toggleHiddenView() {
+  filters.hidden = viewingHidden.value ? '' : 'only';
+  pagination.page = 1;
+  clearSelection();
+  fetchContacts();
+}
+
+function askHide(ids: string[]) {
+  if (ids.length === 0) return;
+  confirmError.value = '';
+  confirmAction.value = { mode: 'hide', ids };
+}
+
+function askRestore(ids: string[]) {
+  if (ids.length === 0) return;
+  confirmError.value = '';
+  confirmAction.value = { mode: 'restore', ids };
+}
+
+async function runConfirmAction() {
+  const action = confirmAction.value;
+  if (!action) return;
+  confirmError.value = '';
+
+  const n = action.mode === 'hide'
+    ? await hideContacts(action.ids)
+    : await restoreContacts(action.ids);
+
+  if (n === null) {
+    confirmError.value = action.mode === 'hide'
+      ? 'Không xoá được. Có thể tài khoản của bạn không có quyền xoá KH.'
+      : 'Không khôi phục được. Thử lại hoặc kiểm tra quyền.';
+    return;
+  }
+
+  confirmAction.value = null;
+  clearSelection();
+  loadStats();
+  toast.success(
+    action.mode === 'hide'
+      ? `Đã xoá ${n} KH khỏi trang (dữ liệu vẫn còn, không huỷ kết bạn)`
+      : `Đã khôi phục ${n} KH về trang`,
+  );
+}
 
 // ── Column toggle ───────────────────────────────────────────────────────────
 // 2 LEVEL:
@@ -573,8 +763,9 @@ function toggleColumn(key: OptColKey) {
   visibleCols.value[key] = !visibleCols.value[key];
   try { localStorage.setItem(LS_KEY_COLS, JSON.stringify(visibleCols.value)); } catch { /* ignore */ }
 }
+// 18 cột cố định (17 cũ + cột ô tích chọn KH để xoá khỏi trang) + các cột bật/tắt
 const totalColumnsCount = computed(() =>
-  17 + Object.values(visibleCols.value).filter(Boolean).length,
+  18 + Object.values(visibleCols.value).filter(Boolean).length,
 );
 
 // Child (KH Con) optional cols — riêng vì bản chất per-Friend chứ không aggregate.
@@ -1626,4 +1817,115 @@ onMounted(() => {
   font-size: 13px; color: var(--smax-grey-700);
 }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Xoá KH khỏi trang: ô tích chọn + thanh hàng loạt + hộp xác nhận ── */
+.row-check {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--smax-primary, #2563eb);
+  vertical-align: middle;
+}
+.row-check:disabled { cursor: not-allowed; opacity: 0.4; }
+.master-row.picked > td { background: var(--smax-primary-soft, #eef4fd); }
+
+.row-action-danger:hover {
+  background: #fef2f2;
+  border-color: #dc2626;
+  color: #dc2626;
+}
+.row-action-restore:hover {
+  background: #e3ede4;
+  border-color: #0a2e0e;
+  color: #0a2e0e;
+}
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: var(--smax-primary-soft, #eef4fd);
+  border: 1px solid var(--smax-primary, #2563eb);
+  border-radius: 7px;
+  padding: 9px 14px;
+  margin-bottom: 9px;
+  font-size: 13px;
+}
+.bulk-count { color: var(--smax-grey-900, #111827); }
+.bulk-link {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--smax-grey-700);
+  text-decoration: underline;
+  font-family: inherit;
+}
+.bulk-btn {
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.bulk-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.bulk-btn-danger { background: #dc2626; border-color: #dc2626; color: #fff; }
+.bulk-btn-danger:hover:not(:disabled) { background: #b91c1c; border-color: #b91c1c; }
+.bulk-btn-restore { background: #0a2e0e; border-color: #0a2e0e; color: #fff; }
+.bulk-btn-restore:hover:not(:disabled) { background: #14521b; border-color: #14521b; }
+
+.hidden-notice {
+  background: #fef6e7;
+  border: 1px solid #f3dca8;
+  border-radius: 7px;
+  padding: 9px 14px;
+  margin-bottom: 9px;
+  font-size: 12.5px;
+  color: #7a5818;
+  line-height: 1.55;
+}
+
+.hide-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hide-dialog {
+  background: var(--smax-bg, #fff);
+  border-radius: 10px;
+  padding: 20px 22px;
+  min-width: 380px;
+  max-width: 480px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.18);
+}
+.hide-dialog h4 { margin: 0 0 11px; font-size: 15px; }
+.hide-lead { margin: 0 0 11px; font-size: 13px; line-height: 1.6; color: var(--smax-grey-900, #1f2937); }
+.hide-points {
+  margin: 0 0 14px;
+  padding-left: 19px;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--smax-grey-700, #4b5563);
+}
+.hide-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  border-radius: 6px;
+  padding: 8px 11px;
+  font-size: 12.5px;
+  margin-bottom: 11px;
+}
+.hide-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.btn-danger { background: #dc2626; border-color: #dc2626; color: #fff; }
+.btn-danger:hover:not(:disabled) { background: #b91c1c; border-color: #b91c1c; }
+.btn-primary-solid { background: #0a2e0e; border-color: #0a2e0e; color: #fff; }
+.btn-primary-solid:hover:not(:disabled) { background: #14521b; border-color: #14521b; }
 </style>

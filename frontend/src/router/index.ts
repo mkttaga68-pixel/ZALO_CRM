@@ -99,6 +99,8 @@ const routes = [
       { path: 'rbac/departments',       name: 'Settings.RbacDepartments',       component: () => import('@/views/rbac/DepartmentsView.vue') },
       { path: 'rbac/permission-groups', name: 'Settings.RbacPermissionGroups',  component: () => import('@/views/rbac/PermissionGroupsView.vue') },
       { path: 'rbac/users',             name: 'Settings.RbacUsers',             component: () => import('@/views/rbac/UsersRbacView.vue') },
+      // Phase Admin Purge 2026-10-25 — admin xoá dữ liệu KH 1 nhân viên vừa đồng bộ vào
+      { path: 'org/data-purge',         name: 'Settings.DataPurge',             component: () => import('@/views/settings/DataPurgeView.vue') },
       // Phase Riêng Tư 2026-05-22 — per-user privacy page (vào nhóm Cá nhân ở sidebar)
       { path: 'privacy',                name: 'Settings.Privacy',               component: () => import('@/views/privacy/PrivacySettingsView.vue') },
 

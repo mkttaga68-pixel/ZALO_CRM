@@ -50,7 +50,16 @@ export async function checkAccess(request: FastifyRequest, reply: FastifyReply, 
  * Reuse cho /friends-db/all-nicks (cross-nick aggregate FE) để admin nhìn được
  * toàn bộ nick org thay vì chỉ owned/explicit access (Codex flagged: admin all-nicks
  * incomplete).
+ *
+ * LOẠI nick đã gỡ (archivedAt != null) — giống getZaloScope và giống danh sách nick
+ * ở sidebar. Trước đây helper này KHÔNG lọc nên tab "Tất cả nick" vẫn đếm bạn bè của
+ * nick đã gỡ: sidebar hiện "0 nick" mà danh sách vẫn ra 3018 bạn. Nặng hơn nữa là khi
+ * 1 nick bị gỡ kiểu purge rồi quét QR lại — purge xoá zaloUid nên lần kết nối sau tạo
+ * ZaloAccount MỚI, nick cũ giữ nguyên Friend row → MỖI KH hiện 2 dòng, cùng 1 Zalo ID,
+ * cùng tên nick. Lọc archived là hết trùng.
  */
+const ACTIVE_NICK_FILTER = { archivedAt: null, purged: false } as const;
+
 export async function getAccessibleZaloAccountIds(user: {
   id: string;
   orgId: string;
@@ -59,7 +68,7 @@ export async function getAccessibleZaloAccountIds(user: {
   // Owner/admin: tất cả nick trong org
   if (['owner', 'admin'].includes(user.role)) {
     const accounts = await prisma.zaloAccount.findMany({
-      where: { orgId: user.orgId },
+      where: { orgId: user.orgId, ...ACTIVE_NICK_FILTER },
       select: { id: true },
     });
     return accounts.map((a) => a.id);
@@ -67,11 +76,14 @@ export async function getAccessibleZaloAccountIds(user: {
   // Non-admin: union explicit ACL + owned
   const [accessRows, ownedRows] = await Promise.all([
     prisma.zaloAccountAccess.findMany({
-      where: { userId: user.id, zaloAccount: { orgId: user.orgId } },
+      where: {
+        userId: user.id,
+        zaloAccount: { orgId: user.orgId, ...ACTIVE_NICK_FILTER },
+      },
       select: { zaloAccountId: true },
     }),
     prisma.zaloAccount.findMany({
-      where: { orgId: user.orgId, ownerUserId: user.id },
+      where: { orgId: user.orgId, ownerUserId: user.id, ...ACTIVE_NICK_FILTER },
       select: { id: true },
     }),
   ]);

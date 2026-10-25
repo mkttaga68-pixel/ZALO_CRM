@@ -10,11 +10,33 @@
  *  - api.getAllFriends() → accepted friends
  *  - api.getSentFriendRequests() → pending_sent invitations
  *
- * Diff-then-emit (P10 trong eng-review):
- *  - Trước khi update, load Friend row existing → compute patch chỉ-cột-đổi.
- *  - Empty patch → SKIP update + SKIP emit. Typical cron run với Zalo state stable
- *    sẽ emit 0 events (99%+ rows no change).
- *  - Có patch → update + emit 'friend:updated' với patched fields only.
+ * Loại trùng trong lô (1 map, accepted thắng pending_sent):
+ *  - Cùng 1 UID có thể nằm ở CẢ getAllFriends VÀ getSentFriendRequests. Trước đây
+ *    2 vòng lặp riêng chạy tuần tự nên vòng pending GHI ĐÈ accepted → KH đã là bạn
+ *    bị hạ về "đang chờ". Gom 1 map trước khi ghi DB để hết hẳn.
+ *  - liveCount = số bạn bè DUY NHẤT (không cộng trùng 2 danh sách như trước).
+ *
+ * Chỉ đồng bộ phần CHƯA CÓ / CÓ ĐỔI (ràng buộc chính của sync):
+ *  Sau khi pre-load Friend row (1 query, kèm friendshipStatus), mỗi UID rơi vào
+ *  đúng 1 trong 3 nhánh:
+ *   1. MỚI       — chưa có Friend row cho nick này → xử lý đầy đủ:
+ *                  resolve/tạo Contact + applyFriendTransition + ghi danh tính.
+ *   2. KHÔNG ĐỔI — đã có row, friendshipStatus khớp VÀ danh tính không drift
+ *                  → GIỮ NGUYÊN: 0 query, 0 ghi, 0 emit.
+ *   3. CÓ ĐỔI    — đã có row nhưng lệch trạng thái và/hoặc danh tính → chỉ ghi
+ *                  phần lệch, dùng contactId có sẵn trong row (không resolve Contact lại),
+ *                  và chỉ chạy applyFriendTransition khi trạng thái thật sự đổi.
+ *
+ *  Nhờ vậy nick đồng bộ lần 2+ mà danh sách bạn không đổi thì tốn đúng 2 lời gọi
+ *  Zalo + 1 query DB, thay vì ~5 query + 1 transaction MỖI người bạn như trước
+ *  (3000 bạn ≈ 15.000 query mỗi 15 phút → 1 query).
+ *
+ *  LƯU Ý: so sánh theo TẬP UID, không theo số lượng. Số lượng giữ nguyên vẫn có thể
+ *  là 1 người huỷ kết bạn + 1 người mới (tổng không đổi) — so theo số lượng sẽ bỏ sót
+ *  người mới đó. So theo UID thì người mới luôn được thêm.
+ *
+ *  Sync KHÔNG xoá Friend row của người đã huỷ kết bạn bên Zalo (giữ nguyên lịch sử
+ *  chăm KH); việc đó do friend_event REMOVE xử lý.
  *
  * Cooldown 5s/account khi trigger='manual' (chống user spam click). Cron + on-connect
  * KHÔNG bị cooldown chặn.
@@ -61,12 +83,25 @@ export interface SyncFriendsOptions {
 }
 
 export interface SyncFriendsResult {
-  /** Số friend Zalo trả về (accepted + pending) */
+  /** Số bạn bè DUY NHẤT Zalo trả về (accepted + pending, đã loại trùng UID trong lô) */
   liveCount: number;
   /** Contact stub mới tạo do KH chưa có trong DB */
   createdContacts: number;
-  /** Friend rows được upsert (cả no-change cũng đếm vì applyFriendTransition không trả diff info) */
+  /** Friend rows thực sự được ghi (= newFriends + updatedFriends) */
   upsertedFriends: number;
+  /**
+   * KH CHƯA CÓ trong hệ thống (không có Friend row cho nick này) → xử lý đầy đủ:
+   * resolve/tạo Contact + applyFriendTransition + ghi danh tính.
+   */
+  newFriends: number;
+  /**
+   * Friend row ĐÃ CÓ và không có gì đổi (trạng thái kết bạn giữ nguyên, danh tính
+   * giữ nguyên) → bỏ qua hoàn toàn, KHÔNG query, KHÔNG ghi, KHÔNG emit.
+   * Lần sync thứ 2+ của 1 nick ổn định thì gần như toàn bộ nằm ở đây.
+   */
+  skippedUnchanged: number;
+  /** Friend row đã có nhưng đổi trạng thái và/hoặc danh tính → chỉ ghi phần đổi */
+  updatedFriends: number;
   /** Số 'friend:updated' socket events đã emit (= số rows thực sự đổi field) */
   emittedCount: number;
   /** Số errors gặp phải khi process per-friend (chỉ log, không throw) */
@@ -93,6 +128,20 @@ const DIFFABLE_FIELDS = [
 ] as const;
 type DiffableField = (typeof DIFFABLE_FIELDS)[number];
 type DiffSnapshot = Partial<Record<DiffableField, string | null>>;
+
+/**
+ * Gộp 2 snapshot của CÙNG 1 UID xuất hiện nhiều lần trong 1 lô.
+ * Giá trị mới chỉ thắng khi thật sự có (non-null) — bản ghi thiếu field không
+ * được phép xoá field mà bản ghi khác đã có.
+ */
+function mergeSnapshot(base: DiffSnapshot, incoming: DiffSnapshot): DiffSnapshot {
+  const out: DiffSnapshot = { ...base };
+  for (const k of DIFFABLE_FIELDS) {
+    const v = incoming[k];
+    if (v !== null && v !== undefined && v !== '') out[k] = v;
+  }
+  return out;
+}
 
 function computeDiff(existing: DiffSnapshot, incoming: DiffSnapshot): DiffSnapshot {
   const patch: DiffSnapshot = {};
@@ -150,6 +199,9 @@ export async function syncFriendsForAccount(
     liveCount: 0,
     createdContacts: 0,
     upsertedFriends: 0,
+    newFriends: 0,
+    skippedUnchanged: 0,
+    updatedFriends: 0,
     emittedCount: 0,
     errors: 0,
     durationMs: 0,
@@ -194,28 +246,57 @@ export async function syncFriendsForAccount(
     return result;
   }
 
-  result.liveCount = liveFriends.length + sentRequests.length;
-
-  // Pre-load existing Friend snapshots in 1 query để diff không N+1
-  const allUids = new Set<string>();
-  for (const f of liveFriends) {
-    const info = extractFriendInfo(f);
-    if (info) allUids.add(info.uid);
+  // ── 1. Loại trùng UID ngay trong lô ────────────────────────────────────
+  // Cùng 1 UID có thể xuất hiện nhiều lần trong getAllFriends, hoặc có mặt ở CẢ
+  // getAllFriends VÀ getSentFriendRequests. Trước đây 2 vòng lặp riêng xử lý tuần
+  // tự nên vòng pending GHI ĐÈ accepted → KH đã là bạn bị hạ về "đang chờ".
+  // Gom về 1 map: accepted luôn thắng pending_sent.
+  const batch = new Map<string, BatchItem>();
+  for (const live of liveFriends) {
+    const info = extractFriendInfo(live);
+    if (!info) continue;
+    const prev = batch.get(info.uid);
+    if (prev) {
+      // Trùng trong lô → merge snapshot. CHỈ ghi đè bằng giá trị có thật:
+      // bản ghi sau thiếu field (avatar/globalId rỗng) không được xoá giá trị
+      // bản ghi trước đã có, nếu không sẽ sinh patch null giả và wipe dữ liệu.
+      prev.snapshot = mergeSnapshot(prev.snapshot, info.snapshot);
+    } else {
+      batch.set(info.uid, { uid: info.uid, snapshot: info.snapshot, targetStatus: 'accepted' });
+    }
   }
-  for (const r of sentRequests) {
-    const info = extractFriendInfo(r);
-    if (info) allUids.add(info.uid);
+  for (const req of sentRequests) {
+    const info = extractFriendInfo(req);
+    if (!info) continue;
+    // Đã có ở trạng thái accepted → KHÔNG hạ cấp xuống pending
+    if (batch.has(info.uid)) continue;
+    batch.set(info.uid, { uid: info.uid, snapshot: info.snapshot, targetStatus: 'pending_sent' });
   }
 
+  // Số bạn bè DUY NHẤT thực tế sau khi loại trùng
+  result.liveCount = batch.size;
+
+  // Zalo không trả bạn nào → không có gì để đối chiếu, khỏi chạm DB.
+  if (batch.size === 0) {
+    result.durationMs = Date.now() - startedAt;
+    logger.info(`[friend-sync:${accountId}] trigger=${opts.trigger} live=0 — không có bạn nào để đồng bộ`);
+    return result;
+  }
+
+  // ── 2. Nạp sẵn Friend row đã có — 1 query, không N+1 ───────────────────
+  // friendshipStatus BẮT BUỘC có trong select: đây là cơ sở để biết KH này đã
+  // đồng bộ rồi và trạng thái còn đúng hay không. Thiếu nó thì không thể phân
+  // biệt "đã có, không đổi" với "cần ghi lại".
   const existingFriends = await prisma.friend.findMany({
     where: {
       zaloAccountId: accountId,
-      zaloUidInNick: { in: [...allUids] },
+      zaloUidInNick: { in: [...batch.keys()] },
     },
     select: {
       id: true,
       contactId: true,
       zaloUidInNick: true,
+      friendshipStatus: true,
       zaloDisplayName: true,
       zaloAvatarUrl: true,
       zaloGlobalId: true,
@@ -224,68 +305,101 @@ export async function syncFriendsForAccount(
   });
   const existingByUid = new Map(existingFriends.map((f) => [f.zaloUidInNick, f]));
 
-  // Process accepted friends → friendshipStatus='accepted'
-  for (const live of liveFriends) {
-    const info = extractFriendInfo(live);
-    if (!info) continue;
+  // ── 3. Phân loại từng UID: MỚI / KHÔNG ĐỔI / CÓ ĐỔI ────────────────────
+  for (const item of batch.values()) {
     try {
-      await processFriend({
-        accountId,
-        orgId,
-        uid: info.uid,
-        snapshot: info.snapshot,
-        targetStatus: 'accepted',
-        fallbackName: info.snapshot.zaloDisplayName,
-        fallbackAvatar: info.snapshot.zaloAvatarUrl,
-        existing: existingByUid.get(info.uid),
-        io: opts.io ?? null,
-        result,
-      });
-    } catch (err) {
-      result.errors++;
-      logger.warn(`[friend-sync:${accountId}] process uid=${info.uid} failed:`, err);
-      await logSyncError(orgId, accountId, opts.trigger, err, {
-        phase: 'process_accepted',
-        uid: info.uid,
-      });
-    }
-  }
+      const existing = existingByUid.get(item.uid);
 
-  // Process sent requests → friendshipStatus='pending_sent'
-  for (const req of sentRequests) {
-    const info = extractFriendInfo(req);
-    if (!info) continue;
-    try {
-      await processFriend({
+      // (a) KH CHƯA CÓ trong hệ thống → xử lý đầy đủ (resolve/tạo Contact + transition)
+      if (!existing) {
+        await processFriend({
+          accountId,
+          orgId,
+          uid: item.uid,
+          snapshot: item.snapshot,
+          targetStatus: item.targetStatus,
+          fallbackName: item.snapshot.zaloDisplayName,
+          fallbackAvatar: item.snapshot.zaloAvatarUrl,
+          existing: undefined,
+          io: opts.io ?? null,
+          result,
+        });
+        result.newFriends++;
+        result.upsertedFriends++;
+        continue;
+      }
+
+      // (b) Đã có → so sánh để biết có cần ghi gì không.
+      const patch = computeDiff(
+        {
+          zaloDisplayName: existing.zaloDisplayName,
+          zaloAvatarUrl: existing.zaloAvatarUrl,
+          zaloGlobalId: existing.zaloGlobalId,
+          zaloUsername: existing.zaloUsername,
+        },
+        item.snapshot,
+      );
+      // friendshipStatus thiếu/khác target → cần chạy state machine.
+      // Thiếu thì coi như cần chạy (fail-open, thà làm thừa hơn bỏ sót trạng thái).
+      const needsTransition = existing.friendshipStatus !== item.targetStatus;
+
+      if (!needsTransition && Object.keys(patch).length === 0) {
+        // KHÔNG ĐỔI GÌ → giữ nguyên, bỏ qua sạch: không query, không ghi, không emit.
+        // Đây là nhánh chiếm ~100% ở lần sync thứ 2+ của 1 nick ổn định.
+        result.skippedUnchanged++;
+        continue;
+      }
+
+      await syncExistingFriend({
         accountId,
         orgId,
-        uid: info.uid,
-        snapshot: info.snapshot,
-        targetStatus: 'pending_sent',
-        fallbackName: info.snapshot.zaloDisplayName,
-        fallbackAvatar: info.snapshot.zaloAvatarUrl,
-        existing: existingByUid.get(info.uid),
+        uid: item.uid,
+        existing,
+        targetStatus: item.targetStatus,
+        patch,
+        needsTransition,
         io: opts.io ?? null,
         result,
       });
+      result.updatedFriends++;
+      result.upsertedFriends++;
     } catch (err) {
       result.errors++;
-      logger.warn(`[friend-sync:${accountId}] process pending uid=${info.uid} failed:`, err);
+      logger.warn(`[friend-sync:${accountId}] process uid=${item.uid} failed:`, err);
       await logSyncError(orgId, accountId, opts.trigger, err, {
-        phase: 'process_pending',
-        uid: info.uid,
+        phase: existingByUid.has(item.uid) ? 'process_existing' : 'process_new',
+        uid: item.uid,
       });
     }
   }
 
   result.durationMs = Date.now() - startedAt;
   logger.info(
-    `[friend-sync:${accountId}] trigger=${opts.trigger} live=${result.liveCount} upserted=${result.upsertedFriends} emitted=${result.emittedCount} created=${result.createdContacts} errors=${result.errors} dur=${result.durationMs}ms`,
+    `[friend-sync:${accountId}] trigger=${opts.trigger} live=${result.liveCount} new=${result.newFriends} updated=${result.updatedFriends} unchanged=${result.skippedUnchanged} emitted=${result.emittedCount} created=${result.createdContacts} errors=${result.errors} dur=${result.durationMs}ms`,
   );
   return result;
 }
 
 // ── Per-friend processing ──────────────────────────────────────────────────
+
+/** 1 KH trong lô sau khi loại trùng UID. */
+interface BatchItem {
+  uid: string;
+  snapshot: DiffSnapshot;
+  targetStatus: 'accepted' | 'pending_sent';
+}
+
+/** Friend row đã có trong DB (kết quả pre-load 1 query). */
+interface ExistingFriendRow {
+  id: string;
+  contactId: string;
+  zaloUidInNick: string;
+  friendshipStatus: string;
+  zaloDisplayName: string | null;
+  zaloAvatarUrl: string | null;
+  zaloGlobalId: string | null;
+  zaloUsername: string | null;
+}
 
 interface ProcessFriendArgs {
   accountId: string;
@@ -295,19 +409,68 @@ interface ProcessFriendArgs {
   targetStatus: 'accepted' | 'pending_sent';
   fallbackName: string | null | undefined;
   fallbackAvatar: string | null | undefined;
-  existing:
-    | {
-        id: string;
-        contactId: string;
-        zaloUidInNick: string;
-        zaloDisplayName: string | null;
-        zaloAvatarUrl: string | null;
-        zaloGlobalId: string | null;
-        zaloUsername: string | null;
-      }
-    | undefined;
+  existing: ExistingFriendRow | undefined;
   io: Server | null;
   result: SyncFriendsResult;
+}
+
+/**
+ * KH ĐÃ CÓ Friend row và có thứ thực sự đổi → chỉ ghi phần đổi.
+ *
+ * Khác processFriend ở chỗ KHÔNG resolve lại Contact: contactId đã nằm sẵn trong
+ * Friend row nên bỏ được 1-2 query contact.findFirst mỗi KH. Và applyFriendTransition
+ * (transaction: findUnique + upsert + counter + claim assignedUser) chỉ chạy khi
+ * trạng thái kết bạn thật sự đổi, thay vì chạy cho mọi KH mỗi 15 phút như trước.
+ */
+async function syncExistingFriend(args: {
+  accountId: string;
+  orgId: string;
+  uid: string;
+  existing: ExistingFriendRow;
+  targetStatus: 'accepted' | 'pending_sent';
+  patch: DiffSnapshot;
+  needsTransition: boolean;
+  io: Server | null;
+  result: SyncFriendsResult;
+}): Promise<void> {
+  // Trạng thái kết bạn đổi → chạy state machine để counter Contact + claim
+  // assignedUser đúng. source='sync' để không set becameFriendAt sai.
+  if (args.needsTransition) {
+    await applyFriendTransition({
+      orgId: args.orgId,
+      zaloAccountId: args.accountId,
+      contactId: args.existing.contactId,
+      zaloUidInNick: args.uid,
+      newFriendshipStatus: args.targetStatus,
+      source: 'sync',
+    });
+  }
+
+  // Danh tính không drift → xong, không ghi thêm, không emit.
+  if (Object.keys(args.patch).length === 0) return;
+
+  const updated = await prisma.friend.update({
+    where: {
+      zaloAccountId_zaloUidInNick: {
+        zaloAccountId: args.accountId,
+        zaloUidInNick: args.uid,
+      },
+    },
+    data: args.patch,
+    select: { id: true, contactId: true, zaloAccountId: true, zaloUidInNick: true },
+  });
+
+  if (args.io) {
+    const payload = buildFriendUpdatedPayload({
+      friendId: updated.id,
+      contactId: updated.contactId,
+      zaloAccountId: updated.zaloAccountId,
+      zaloUidInNick: updated.zaloUidInNick,
+      patch: args.patch,
+    });
+    args.io.to(`org:${args.orgId}`).emit('friend:updated', payload);
+    args.result.emittedCount++;
+  }
 }
 
 async function processFriend(args: ProcessFriendArgs): Promise<void> {
@@ -407,7 +570,7 @@ async function processFriend(args: ProcessFriendArgs): Promise<void> {
     newFriendshipStatus: args.targetStatus,
     source: 'sync',
   });
-  args.result.upsertedFriends++;
+  // upsertedFriends được đếm ở vòng lặp gọi (phân loại mới/đổi), không đếm ở đây.
 
   // 3. Diff identity fields (name/avatar/globalId/username) → update + emit only if changed
   const existingSnap: DiffSnapshot = args.existing
@@ -458,6 +621,12 @@ export interface SyncAccountFullyResult {
   labelsUpdated: number;
   errors: string[];
   durationMs: number;
+  /**
+   * True khi nick đang bị admin tạm dừng đồng bộ (ZaloAccount.syncPaused) —
+   * không gọi Zalo, không ghi DB. Caller (route /friends-db/sync) nên báo cho
+   * user biết thay vì hiện "đồng bộ xong 0 thay đổi".
+   */
+  syncPaused?: boolean;
 }
 
 /**
@@ -484,6 +653,21 @@ export async function syncAccountFully(
     errors: [],
     durationMs: 0,
   };
+
+  // Phase Admin Purge 2026-10-25 — nick bị admin tạm dừng đồng bộ.
+  // Gate đặt ở ĐÂY (wrapper) vì cả 3 trigger — cron 15', autoSyncOnConnect,
+  // nút "Làm mới ngay" — đều đi qua syncAccountFully. Không gate thì dữ liệu KH
+  // admin vừa xoá sẽ bị hút về nguyên vẹn trong ≤15 phút.
+  const gate = await prisma.zaloAccount.findUnique({
+    where: { id: accountId },
+    select: { syncPaused: true },
+  });
+  if (gate?.syncPaused) {
+    logger.info(`[friend-sync-full:${accountId}] Bỏ qua — admin đã tạm dừng đồng bộ cho nick này`);
+    result.syncPaused = true;
+    result.durationMs = Date.now() - startedAt;
+    return result;
+  }
 
   // B5 fix — labels full-sync internally calls syncAliasesForAccount (alias-sync.ts
   // imported lazy inside syncLabelsForAccount full path). Wrapper bỏ alias parallel

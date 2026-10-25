@@ -100,6 +100,12 @@ export const ACTION_META: Record<string, ActionMeta> = {
   contact_split:           { label: 'Tách KH' },
   data_import:             { label: 'Import dữ liệu', icon: '⬇️' },
   data_export:             { label: 'Export dữ liệu', icon: '⬆️' },
+  // Phase Admin Purge 2026-10-25
+  admin_purge_synced_contacts: { label: 'Xoá dữ liệu KH đã đồng bộ', icon: '🧹' },
+  admin_resume_friend_sync:    { label: 'Bật lại đồng bộ nick', icon: '▶️' },
+  contact_hidden_from_page:    { label: 'Xoá KH khỏi trang', icon: '🗑' },
+  contact_restored_to_page:    { label: 'Khôi phục KH về trang', icon: '↩️' },
+  user_deleted_permanently:    { label: 'Xoá vĩnh viễn nhân viên', icon: '🗑' },
 
   // automation
   bot_tag_auto:       { label: 'Bot auto-tag' },
@@ -129,6 +135,9 @@ export function categoryOf(action: string, fallback: ActivityCategory = 'system'
     contact_link_parent: 'system', contact_unlink_parent: 'system',
     parent_candidate_accept: 'system', contact_merge: 'system',
     contact_split: 'system', data_import: 'system', data_export: 'system',
+    admin_purge_synced_contacts: 'system', admin_resume_friend_sync: 'system',
+    contact_hidden_from_page: 'system', contact_restored_to_page: 'system',
+    user_deleted_permanently: 'system',
     bot_tag_auto: 'automation', bot_score_calc: 'automation', bot_status_suggest: 'automation',
     auto_tag_change: 'automation',
   };
