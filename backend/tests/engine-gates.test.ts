@@ -12,7 +12,7 @@ import {
 } from '../src/modules/automation/engine/gate-evaluator.js';
 
 const at = (hour: number) => {
-  const d = new Date(2026, 4, 20, hour, 0, 0); // May 20, 2026 — middle of project
+  const d = new Date(Date.UTC(2026, 4, 20, hour, 0, 0)); // deterministic UTC fixture
   return d;
 };
 
@@ -27,19 +27,46 @@ describe('checkHourRange', () => {
     const r = checkHourRange(at(3), { allowedHourRange: [6, 22] });
     expect(r.passed).toBe(false);
     expect(r.failedGate).toBe('hour_range');
-    expect(r.retryAfter?.getHours()).toBe(6);
-    expect(r.retryAfter?.getDate()).toBe(20);
+    expect(r.retryAfter?.getUTCHours()).toBe(6);
+    expect(r.retryAfter?.getUTCDate()).toBe(20);
   });
 
   it('blocks after window, retryAfter is next day at start hour', () => {
     const r = checkHourRange(at(23), { allowedHourRange: [6, 22] });
     expect(r.passed).toBe(false);
-    expect(r.retryAfter?.getHours()).toBe(6);
-    expect(r.retryAfter?.getDate()).toBe(21);
+    expect(r.retryAfter?.getUTCHours()).toBe(6);
+    expect(r.retryAfter?.getUTCDate()).toBe(21);
   });
 
   it('no rule → passes', () => {
     expect(checkHourRange(at(3), {}).passed).toBe(true);
+  });
+
+  it('uses organization timezone instead of the UTC container timezone', () => {
+    const noonInVietnam = new Date('2026-10-26T05:06:00.000Z');
+    const r = checkHourRange(noonInVietnam, { allowedHourRange: [8, 22] }, '+07:00');
+    expect(r.passed).toBe(true);
+  });
+
+  it('reschedules before the window to 08:00 in organization timezone', () => {
+    const sevenInVietnam = new Date('2026-10-26T00:15:00.000Z');
+    const r = checkHourRange(sevenInVietnam, { allowedHourRange: [8, 22] }, '+07:00');
+    expect(r.passed).toBe(false);
+    expect(r.retryAfter?.toISOString()).toBe('2026-10-26T01:00:00.000Z');
+  });
+
+  it('reschedules after the window to next-day 08:00 in organization timezone', () => {
+    const elevenPmInVietnam = new Date('2026-10-26T16:15:00.000Z');
+    const r = checkHourRange(elevenPmInVietnam, { allowedHourRange: [8, 22] }, '+07:00');
+    expect(r.passed).toBe(false);
+    expect(r.retryAfter?.toISOString()).toBe('2026-10-27T01:00:00.000Z');
+  });
+
+  it('falls back to UTC for an invalid timezone without crashing the worker', () => {
+    const fiveUtc = new Date('2026-10-26T05:06:00.000Z');
+    const r = checkHourRange(fiveUtc, { allowedHourRange: [8, 22] }, 'invalid');
+    expect(r.passed).toBe(false);
+    expect(r.retryAfter?.toISOString()).toBe('2026-10-26T08:00:00.000Z');
   });
 });
 
@@ -69,6 +96,18 @@ describe('checkPerNickThrottle', () => {
     const now = new Date();
     const lastSent = new Date(now.getTime() - 1000);
     expect(checkPerNickThrottle(now, 'request_friend', lastSent, { perNickThrottle: false, randomDelayPerSend: { min: 15, max: 45 } }).passed).toBe(true);
+  });
+
+  it('uses seconds-based throttle when configured', () => {
+    const now = new Date('2026-10-26T05:00:10.000Z');
+    const lastSent = new Date('2026-10-26T05:00:00.000Z');
+    const r = checkPerNickThrottle(now, 'send_message', lastSent, {
+      perNickThrottle: true,
+      randomDelayPerSend: { min: 15, max: 45 },
+      randomDelayPerSendSeconds: { min: 30, max: 30 },
+    });
+    expect(r.passed).toBe(false);
+    expect(r.retryAfter?.toISOString()).toBe('2026-10-26T05:00:30.000Z');
   });
 });
 

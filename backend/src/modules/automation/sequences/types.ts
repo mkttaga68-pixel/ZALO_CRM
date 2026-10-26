@@ -20,6 +20,8 @@ export interface SequenceStep {
 export interface SequenceRuntimeRules {
   allowedHourRange?: [number, number];
   randomDelayPerSend?: { min: number; max: number };
+  /** Seconds-based delay; takes precedence over the legacy minute field. */
+  randomDelayPerSendSeconds?: { min: number; max: number };
   perNickThrottle?: boolean;
   crossNickRecencyDays?: number;
   stopOnAccept?: boolean;
@@ -117,6 +119,17 @@ export function validateRuntimeRules(
     }
   }
 
+  if (r.randomDelayPerSendSeconds !== undefined) {
+    if (typeof r.randomDelayPerSendSeconds !== 'object' || r.randomDelayPerSendSeconds === null) {
+      return { ok: false, error: 'randomDelayPerSendSeconds phải là { min, max }' };
+    }
+    const d = r.randomDelayPerSendSeconds as Record<string, unknown>;
+    if (typeof d.min !== 'number' || typeof d.max !== 'number'
+        || d.min < 0 || d.max < d.min || d.max > 3600) {
+      return { ok: false, error: 'randomDelayPerSendSeconds phải thỏa 0 ≤ min ≤ max ≤ 3600' };
+    }
+  }
+
   if (r.perNickThrottle !== undefined && typeof r.perNickThrottle !== 'boolean') {
     return { ok: false, error: 'perNickThrottle phải là boolean' };
   }
@@ -130,4 +143,11 @@ export function validateRuntimeRules(
   }
 
   return { ok: true, rules: r as SequenceRuntimeRules };
+}
+
+export function randomDelayRangeMs(rules: SequenceRuntimeRules): { min: number; max: number } {
+  const seconds = rules.randomDelayPerSendSeconds;
+  if (seconds) return { min: seconds.min * 1000, max: seconds.max * 1000 };
+  const minutes = rules.randomDelayPerSend;
+  return { min: (minutes?.min ?? 0) * 60_000, max: (minutes?.max ?? 0) * 60_000 };
 }

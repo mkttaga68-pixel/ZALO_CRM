@@ -84,6 +84,12 @@
               <span v-if="def.emoji">{{ def.emoji }} </span>{{ def.name }}
               <span v-if="def.category" class="dd-category">· {{ def.category }}</span>
             </span>
+            <span
+              class="dd-source-badge"
+              :class="def.managedBy === 'zalo_sync' ? 'source-zalo' : (automationTagIds.has(def.id) ? 'source-auto' : 'source-crm')"
+            >
+              {{ def.managedBy === 'zalo_sync' ? 'ZALO' : (automationTagIds.has(def.id) ? 'AUTO' : 'CRM') }}
+            </span>
             <span v-if="tags.includes(def.name)" class="dd-check">✓</span>
           </button>
 
@@ -116,6 +122,7 @@ import { api } from '@/api/index';
 import { useToast } from '@/composables/use-toast';
 import { tagColor as lookupTagColor, cleanTagName } from '@/composables/use-crm-tag-defs';
 import { AUTO_TAG_DISPLAY, getAutoTagDef } from '@/constants/auto-tags';
+import { listTriggers } from '@/api/automation/triggers';
 import ZaloBrandIcon from '@/components/icons/ZaloBrandIcon.vue';
 
 interface CrmTagDef {
@@ -153,6 +160,7 @@ const toast = useToast();
 
 // CrmTag master list — fetch khi cần
 const tagDefs = ref<CrmTagDef[]>([]);
+const automationTagIds = ref(new Set<string>());
 const loading = ref(false);
 let fetchedOnce = false;
 
@@ -162,6 +170,17 @@ async function loadTagDefs() {
   try {
     const { data } = await api.get('/crm-tags');
     tagDefs.value = (data.tags || []).filter((t: CrmTagDef) => t.isActive);
+    try {
+      const triggers = await listTriggers({ eventType: 'crm_tag_added', enabled: true });
+      automationTagIds.value = new Set(
+        triggers
+          .map(trigger => trigger.eventFilter?.crmTagId)
+          .filter((id): id is string => typeof id === 'string'),
+      );
+    } catch (err) {
+      // Tag assignment must remain available even if this user cannot read Bot-Auto.
+      console.warn('[crm-tags] Cannot load automation trigger badges', err);
+    }
     fetchedOnce = true;
   } catch (err) {
     console.warn('[crm-tags] Cannot load master list', err);
@@ -219,13 +238,17 @@ watch(dropdownOpen, (v) => {
 });
 
 const filteredDefs = computed(() => {
-  if (!search.value.trim()) return tagDefs.value;
+  let list = tagDefs.value;
+  if (!search.value.trim()) {
+    return [...list].sort((a, b) => Number(a.managedBy === 'zalo_sync') - Number(b.managedBy === 'zalo_sync'));
+  }
   const q = search.value.toLowerCase().trim();
-  return tagDefs.value.filter(d =>
+  list = list.filter(d =>
     d.name.toLowerCase().includes(q) ||
     (d.description || '').toLowerCase().includes(q) ||
     (d.category || '').toLowerCase().includes(q),
   );
+  return [...list].sort((a, b) => Number(a.managedBy === 'zalo_sync') - Number(b.managedBy === 'zalo_sync'));
 });
 
 function onEnterSearch() {
@@ -301,7 +324,7 @@ async function onCreateNewTag() {
     tagDefs.value.push(data.tag);
     await persist([...tags.value, name]);
     search.value = '';
-    toast.success(`✓ Đã tạo tag "${name}" + gắn cho KH`);
+    toast.success(`✓ Đã tạo tag CRM "${name}"`);
   } catch (err: any) {
     // Tag có thể đã tồn tại trong DB (legacy) — vẫn assign vào Contact.tags
     if (err?.response?.status === 409) {
@@ -342,13 +365,19 @@ async function removeTag(tag: string) {
 
 async function persist(next: string[]) {
   if (!props.contactId) return;
+  const previous = [...tags.value];
+  const addedNames = next.filter(tag => !previous.includes(tag));
   emit('update:modelValue', next); // optimistic
   try {
     // Backend dùng PUT /contacts/:id/tags (endpoint chuyên cho tags), KHÔNG phải PATCH.
     await api.put(`/contacts/${props.contactId}/tags`, { tags: next });
+    if (addedNames.length > 0) {
+      toast.success('Đã ghi nhận Tag CRM');
+    }
     // Trigger timeline refresh + highlight entry "tag_*_crm" mới
     window.dispatchEvent(new CustomEvent('timeline-updated', { detail: { contactId: props.contactId } }));
   } catch (err: any) {
+    emit('update:modelValue', previous);
     const msg = err?.response?.data?.error || `Lưu tag thất bại (${err?.response?.status || 'network'})`;
     toast.error(msg);
   }
@@ -603,6 +632,17 @@ onMounted(() => { void loadTagDefs(); });
   font-weight: 700;
   flex-shrink: 0;
 }
+.dd-source-badge {
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  flex-shrink: 0;
+}
+.dd-source-badge.source-crm { background: #eef2f7; color: #455a64; }
+.dd-source-badge.source-auto { background: #fff3e0; color: #e65100; }
+.dd-source-badge.source-zalo { background: #e8f1ff; color: #0068ff; }
 
 .dd-footer {
   border-top: 1px solid var(--smax-grey-100);

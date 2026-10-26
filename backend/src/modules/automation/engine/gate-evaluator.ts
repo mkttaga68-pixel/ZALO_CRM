@@ -13,6 +13,7 @@
 
 import type { SequenceRuntimeRules, GateResult } from './types.js';
 import type { BlockActionType } from '../blocks/types.js';
+import { randomDelayRangeMs } from '../sequences/types.js';
 
 // ── Pure gate functions ───────────────────────────────────────────────────
 
@@ -45,31 +46,47 @@ export function checkConsent(
 }
 
 // Hour range gate — returns retryAfter for next valid window if blocked.
+// Organization.timezone is a fixed UTC offset (for example "+07:00"). Never
+// use the host/container timezone for this business rule: production runs UTC.
+function parseTimezoneOffsetMinutes(timezone: string): number {
+  const match = /^([+-])(\d{2}):(\d{2})$/.exec(timezone);
+  if (!match) return 0;
+  const direction = match[1] === '-' ? -1 : 1;
+  return direction * (Number(match[2]) * 60 + Number(match[3]));
+}
+
 export function checkHourRange(
   now: Date,
   rules: SequenceRuntimeRules,
+  timezone = '+00:00',
 ): GateResult {
   const range = rules.allowedHourRange;
   if (!range) return { passed: true };
   const [start, end] = range;
-  const hour = now.getHours();
+  const offsetMinutes = parseTimezoneOffsetMinutes(timezone);
+  const localNow = new Date(now.getTime() + offsetMinutes * 60_000);
+  const hour = localNow.getUTCHours();
   if (hour >= start && hour <= end) {
     return { passed: true };
   }
   // Compute next valid window:
   //   if hour < start: today at `start`
   //   if hour > end: tomorrow at `start`
-  const retryAfter = new Date(now);
-  if (hour < start) {
-    retryAfter.setHours(start, 0, 0, 0);
-  } else {
-    retryAfter.setDate(retryAfter.getDate() + 1);
-    retryAfter.setHours(start, 0, 0, 0);
-  }
+  const nextLocalDay = hour > end ? localNow.getUTCDate() + 1 : localNow.getUTCDate();
+  const retryAtLocalAsUtc = Date.UTC(
+    localNow.getUTCFullYear(),
+    localNow.getUTCMonth(),
+    nextLocalDay,
+    start,
+    0,
+    0,
+    0,
+  );
+  const retryAfter = new Date(retryAtLocalAsUtc - offsetMinutes * 60_000);
   return {
     passed: false,
     failedGate: 'hour_range',
-    detail: `Outside hours [${start}:00 - ${end}:00], retry at ${retryAfter.toISOString()}`,
+    detail: `Outside hours [${start}:00 - ${end}:00] timezone=${timezone}, retry at ${retryAfter.toISOString()}`,
     retryAfter,
   };
 }
@@ -87,12 +104,12 @@ export function checkPerNickThrottle(
   if (!rules.perNickThrottle) return { passed: true };
   if (!lastSentAt) return { passed: true };
 
-  const delay = rules.randomDelayPerSend;
-  if (!delay) return { passed: true };
+  const delay = randomDelayRangeMs(rules);
+  if (delay.min <= 0) return { passed: true };
 
   // Use min as throttle floor — gate only blocks if not even `min` minutes
   // have elapsed. The actual jittered delay is applied at scheduleNext.
-  const minMs = delay.min * 60 * 1000;
+  const minMs = delay.min;
   const elapsed = now.getTime() - lastSentAt.getTime();
   if (elapsed >= minMs) return { passed: true };
 
@@ -100,7 +117,7 @@ export function checkPerNickThrottle(
   return {
     passed: false,
     failedGate: 'per_nick_throttle',
-    detail: `Nick gửi gần đây quá (${actionType}), throttle còn ${Math.ceil((minMs - elapsed) / 60000)} phút`,
+    detail: `Nick gửi gần đây quá (${actionType}), throttle còn ${Math.ceil((minMs - elapsed) / 1000)} giây`,
     retryAfter,
   };
 }

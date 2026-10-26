@@ -616,8 +616,12 @@ async function saveTrigger() {
 
 async function toggleTrigger(trig: AutomationTrigger) {
   try {
-    if (trig.enabled) await triggersApi.disableTrigger(trig.id);
-    else              await triggersApi.enableTrigger(trig.id);
+    if (trig.enabled) {
+      await triggersApi.disableTrigger(trig.id);
+    } else {
+      await triggersApi.enableTrigger(trig.id);
+      showToast('Đã bật bot. Hãy gắn tag CRM cho những khách cần xử lý.', 'success');
+    }
     await loadAll();
   } catch (err: any) {
     showToast(err?.response?.data?.error ?? 'Lỗi toggle', 'error');

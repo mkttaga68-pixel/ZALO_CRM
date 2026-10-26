@@ -32,12 +32,12 @@ import {
 import { dispatchAction } from './action-dispatcher.js';
 import { checkPolicy } from '../../../core/runtime-policy.js';
 import { pickNickForTask } from './nick-selector.js';
-import type { SequenceStep } from '../sequences/types.js';
+import { randomDelayRangeMs, type SequenceStep } from '../sequences/types.js';
 import type { BlockActionType } from '../blocks/types.js';
 
 // ── Worker config ─────────────────────────────────────────────────────────
 
-const POLL_INTERVAL_MS = 10_000; // 10s — light load v1
+const POLL_INTERVAL_MS = 3_000; // fast pickup; overlap guard prevents concurrent ticks
 const BATCH_SIZE = 10;
 
 let workerHandle: NodeJS.Timeout | null = null;
@@ -144,10 +144,11 @@ async function processTask(taskId: string): Promise<void> {
       },
       contact: {
         select: {
-          id: true, acceptedNicksCount: true, lastInboundAt: true, lastOutboundAt: true,
+          id: true, acceptedNicksCount: true,
           consentStatus: true, // gate consent/opt-out (2026-10-25)
         },
       },
+      org: { select: { timezone: true } },
       block: { select: { id: true, archivedAt: true, actionType: true } },
     },
   });
@@ -188,7 +189,7 @@ async function processTask(taskId: string): Promise<void> {
   }
 
   // 3. Hour range
-  const hourCheck = checkHourRange(now, rules);
+  const hourCheck = checkHourRange(now, rules, task.org.timezone);
   if (!hourCheck.passed) {
     await rescheduleForRetry(taskId, hourCheck.retryAfter!, hourCheck.detail);
     return;
@@ -205,21 +206,7 @@ async function processTask(taskId: string): Promise<void> {
     }
   }
 
-  // 5. Cross-nick recency — query latest activity from OTHER nicks for this contact
-  if ((rules.crossNickRecencyDays ?? 0) > 0) {
-    // Use Contact.lastInboundAt as a proxy for "any nick had recent activity".
-    // More precise: query Friend rows for this contact, max(lastActivityAt) across
-    // assigned nicks excluding the one we're sending FROM. Defer that detail to
-    // Phase E2/G when nick assignment is implemented.
-    const latest = task.contact.lastInboundAt ?? task.contact.lastOutboundAt;
-    const recencyCheck = checkCrossNickRecency(now, rules, latest);
-    if (!recencyCheck.passed) {
-      await markSkipped(taskId, recencyCheck.failedGate!, recencyCheck.detail);
-      return;
-    }
-  }
-
-  // 6. Nick assignment — pick from pool if task didn't pre-set one.
+  // 5. Nick assignment — pick from pool if task didn't pre-set one.
   //    pickNickForTask handles per-actionType selection:
   //      - send_message: must find existing Friend (accepted/pending)
   //      - request_friend: round-robin across connected nicks, dedup attempts, cap-aware
@@ -251,6 +238,33 @@ async function processTask(taskId: string): Promise<void> {
       where: { id: taskId },
       data: { assignedNickId },
     });
+  }
+
+  // 6. Cross-nick recency. Only activity belonging to accounts OTHER than
+  // the selected sender counts. Contact-level timestamps also include the
+  // sender itself and therefore caused false-positive skips.
+  if (assignedNickId && (rules.crossNickRecencyDays ?? 0) > 0) {
+    const otherNickFriends = await prisma.friend.findMany({
+      where: {
+        orgId: task.orgId,
+        contactId: task.contact.id,
+        zaloAccountId: { not: assignedNickId },
+      },
+      select: { lastInboundAt: true, lastOutboundAt: true, lastInteractionAt: true },
+    });
+    const activityTimes = otherNickFriends.flatMap((friend) => [
+      friend.lastInboundAt,
+      friend.lastOutboundAt,
+      friend.lastInteractionAt,
+    ]).filter((value): value is Date => value instanceof Date);
+    const latestOtherNickActivity = activityTimes.length > 0
+      ? new Date(Math.max(...activityTimes.map((value) => value.getTime())))
+      : null;
+    const recencyCheck = checkCrossNickRecency(now, rules, latestOtherNickActivity);
+    if (!recencyCheck.passed) {
+      await markSkipped(taskId, recencyCheck.failedGate!, recencyCheck.detail);
+      return;
+    }
   }
 
   // 7. Per-nick throttle + daily cap (Zalo-bound actions only)
@@ -462,8 +476,7 @@ async function markDoneAndAdvance(
     select: { rulesSnapshot: true },
   });
   const rules = (campaign?.rulesSnapshot as object) as SequenceRuntimeRules;
-  const jitterMin = (rules.randomDelayPerSend?.min ?? 0) * 60 * 1000;
-  const jitterMax = (rules.randomDelayPerSend?.max ?? 0) * 60 * 1000;
+  const { min: jitterMin, max: jitterMax } = randomDelayRangeMs(rules);
   const jitter = jitterMin + Math.random() * Math.max(0, jitterMax - jitterMin);
   const scheduledAt = new Date(now.getTime() + nextStep.delayMinutes * 60 * 1000 + jitter);
 

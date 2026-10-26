@@ -122,7 +122,7 @@
                   </div>
                 </div>
                 <div style="min-width: 240px;">
-                  <div class="text-caption mb-1">Delay ngẫu nhiên giữa mỗi lần gửi (phút)</div>
+                  <div class="text-caption mb-1">Delay ngẫu nhiên giữa mỗi lần gửi (giây)</div>
                   <div class="d-flex align-center" style="gap: 8px;">
                     <v-text-field :model-value="delayMin" @update:model-value="setDelayMin($event)" type="number" min="0" variant="outlined" density="compact" hide-details style="width: 80px" />
                     <span>→</span>
@@ -208,8 +208,16 @@ const filteredSequences = computed(() => {
 
 const hourStart = computed(() => editing.value?.runtimeRules.allowedHourRange?.[0] ?? 6);
 const hourEnd   = computed(() => editing.value?.runtimeRules.allowedHourRange?.[1] ?? 22);
-const delayMin  = computed(() => editing.value?.runtimeRules.randomDelayPerSend?.min ?? 15);
-const delayMax  = computed(() => editing.value?.runtimeRules.randomDelayPerSend?.max ?? 45);
+const delayMin = computed(() => {
+  const rules = editing.value?.runtimeRules;
+  return rules?.randomDelayPerSendSeconds?.min
+    ?? (rules?.randomDelayPerSend ? rules.randomDelayPerSend.min * 60 : 5);
+});
+const delayMax = computed(() => {
+  const rules = editing.value?.runtimeRules;
+  return rules?.randomDelayPerSendSeconds?.max
+    ?? (rules?.randomDelayPerSend ? rules.randomDelayPerSend.max * 60 : 30);
+});
 const recencyDays = computed(() => editing.value?.runtimeRules.crossNickRecencyDays ?? 30);
 
 function setHourStart(v: string | number) {
@@ -222,11 +230,11 @@ function setHourEnd(v: string | number) {
 }
 function setDelayMin(v: string | number) {
   if (!editing.value) return;
-  editing.value.runtimeRules.randomDelayPerSend = { min: Number(v) || 0, max: delayMax.value };
+  editing.value.runtimeRules.randomDelayPerSendSeconds = { min: Number(v) || 0, max: delayMax.value };
 }
 function setDelayMax(v: string | number) {
   if (!editing.value) return;
-  editing.value.runtimeRules.randomDelayPerSend = { min: delayMin.value, max: Number(v) || 0 };
+  editing.value.runtimeRules.randomDelayPerSendSeconds = { min: delayMin.value, max: Number(v) || 0 };
 }
 function setRecencyDays(v: string | number) {
   if (!editing.value) return;
@@ -272,6 +280,7 @@ function createNew() {
     runtimeRules: {
       allowedHourRange: [6, 22],
       randomDelayPerSend: { min: 15, max: 45 },
+      randomDelayPerSendSeconds: { min: 5, max: 30 },
       perNickThrottle: true,
       crossNickRecencyDays: 30,
       stopOnAccept: true,

@@ -201,7 +201,8 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
         if (!fc.ok) return reply.status(400).send({ error: fc.error });
       }
 
-      const trigger = await prisma.automationTrigger.update({
+      const wantsAtomicEnable = body.enabled === true && !existing.enabled;
+      let trigger = await prisma.automationTrigger.update({
         where: { id },
         data: {
           name: body.name?.trim(),
@@ -214,9 +215,18 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
           broadcastId: body.broadcastId === null ? null : body.broadcastId ?? undefined,
           segmentSpec: body.segmentSpec === null ? null : body.segmentSpec ?? undefined,
           ruleOverrides: body.ruleOverrides === null ? null : body.ruleOverrides ?? undefined,
-          enabled: body.enabled ?? undefined,
+          enabled: wantsAtomicEnable ? undefined : body.enabled ?? undefined,
         },
       });
+      let wonEnableTransition = false;
+      if (wantsAtomicEnable) {
+        const transition = await prisma.automationTrigger.updateMany({
+          where: { id, orgId: user.orgId, enabled: false },
+          data: { enabled: true },
+        });
+        wonEnableTransition = transition.count === 1;
+        trigger = (await prisma.automationTrigger.findUnique({ where: { id } }))!;
+      }
       // Hot-reload cron schedule (handles enable→disable, expression change, etc.)
       if (trigger.eventType === 'scheduled_cron') {
         if (trigger.enabled) void registerCronTrigger(trigger.id);
@@ -311,13 +321,24 @@ async function toggleEnabled(request: FastifyRequest, reply: FastifyReply, enabl
     const { id } = request.params as { id: string };
     const existing = await prisma.automationTrigger.findFirst({
       where: { id, orgId: user.orgId },
-      select: { id: true },
+      select: { id: true, enabled: true },
     });
     if (!existing) return reply.status(404).send({ error: 'trigger not found' });
-    const trigger = await prisma.automationTrigger.update({
-      where: { id },
-      data: { enabled },
-    });
+    let wonEnableTransition = false;
+    if (enabled) {
+      const transition = await prisma.automationTrigger.updateMany({
+        where: { id, orgId: user.orgId, enabled: false },
+        data: { enabled: true },
+      });
+      wonEnableTransition = transition.count === 1;
+    } else {
+      await prisma.automationTrigger.updateMany({
+        where: { id, orgId: user.orgId, enabled: true },
+        data: { enabled: false },
+      });
+    }
+    const trigger = await prisma.automationTrigger.findUnique({ where: { id } });
+    if (!trigger) return reply.status(404).send({ error: 'trigger not found' });
     // Hot-reload cron schedule if applicable
     if (trigger.eventType === 'scheduled_cron') {
       if (enabled) void registerCronTrigger(trigger.id);

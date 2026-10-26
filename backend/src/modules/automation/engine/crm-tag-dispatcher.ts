@@ -32,7 +32,7 @@ import { logActivity } from '../../activity/activity-logger.js';
 import type { AutomationEvent } from './types.js';
 
 /** Quét lại outbox mỗi 60s — bắt các event pending bị bỏ sót do restart. */
-const SWEEP_INTERVAL_MS = 60_000;
+const SWEEP_INTERVAL_MS = 15_000;
 /** Mỗi lượt quét xử lý tối đa 20 event, tránh một lượt chiếm DB quá lâu. */
 const SWEEP_BATCH = 20;
 /**
@@ -119,7 +119,7 @@ export async function dispatchCrmTagEvent(eventId: string): Promise<DispatchResu
     where: { id: eventId },
     select: {
       id: true, orgId: true, contactId: true, crmTagId: true, tagName: true,
-      actorUserId: true, source: true, occurredAt: true, attemptCount: true,
+      actorUserId: true, source: true, occurredAt: true, attemptCount: true, result: true,
     },
   });
   if (!event) return { outcome: 'not_claimed' };
@@ -149,6 +149,7 @@ export async function dispatchCrmTagEvent(eventId: string): Promise<DispatchResu
 interface ClaimedEvent {
   id: string; orgId: string; contactId: string; crmTagId: string; tagName: string;
   actorUserId: string | null; source: string; occurredAt: Date; attemptCount: number;
+  result: unknown;
 }
 
 async function runGatesAndMaterialize(event: ClaimedEvent): Promise<DispatchResult> {

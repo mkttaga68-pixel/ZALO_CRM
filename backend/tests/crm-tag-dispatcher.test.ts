@@ -55,7 +55,7 @@ function evt(over: Record<string, unknown> = {}) {
   return {
     id: 'ev-1', orgId: 'org-1', contactId: 'kh-1', crmTagId: 'tag-cskh-1',
     tagName: 'Chăm sóc KH ngày 1', actorUserId: 'nv-1', source: 'crm_manual',
-    occurredAt: NOW, attemptCount: 1, ...over,
+    occurredAt: NOW, attemptCount: 1, result: null, ...over,
   };
 }
 
@@ -126,6 +126,7 @@ describe('Đường thành công', () => {
 
     expect(materializeMock.mock.calls[0][0].contactId).toBe('kh-goc');
   });
+
 });
 
 describe('TC5 — trigger tắt', () => {

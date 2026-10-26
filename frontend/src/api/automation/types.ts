@@ -82,6 +82,7 @@ export interface SequenceStep {
 export interface SequenceRuntimeRules {
   allowedHourRange?: [number, number];
   randomDelayPerSend?: { min: number; max: number };
+  randomDelayPerSendSeconds?: { min: number; max: number };
   perNickThrottle?: boolean;
   crossNickRecencyDays?: number;
   stopOnAccept?: boolean;

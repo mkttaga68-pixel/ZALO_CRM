@@ -13,10 +13,10 @@
 //      to avoid spawning duplicate state machines per contact (idempotent on
 //      double-fire). 1 contact may be in 1 active campaign per sequence.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { prisma } from '../../../shared/database/prisma-client.js';
 import { logger } from '../../../shared/utils/logger.js';
-import { DEFAULT_RUNTIME_RULES, type SequenceStep } from '../sequences/types.js';
+import { DEFAULT_RUNTIME_RULES, randomDelayRangeMs, type SequenceStep } from '../sequences/types.js';
 import type { AutomationEvent } from './types.js';
 import { sanitizeContactCriteria, sanitizeManualContactIds } from './segment-sanitizer.js';
 
@@ -25,6 +25,24 @@ export interface MaterializeResult {
   tasksEnqueued: number;
   skipped: number;
   reasons: string[];
+}
+
+function crmTagEventId(event: AutomationEvent): string | null {
+  if (event.type !== 'crm_tag_added' || !event.payload || typeof event.payload !== 'object') return null;
+  const id = (event.payload as Record<string, unknown>).eventId;
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
+function stableUuid(seed: string): string {
+  const hex = createHash('sha256').update(seed).digest('hex').slice(0, 32).split('');
+  hex[12] = '5';
+  hex[16] = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  const value = hex.join('');
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+}
+
+function isUniqueConflict(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: string }).code === 'P2002';
 }
 
 // Loose event filter: every key in `filter` must equal (or includes for arrays)
@@ -98,7 +116,11 @@ export async function materializeFromEvent(
 
   // Find enabled triggers matching eventType in this org
   const triggers = await prisma.automationTrigger.findMany({
-    where: { orgId: event.orgId, eventType: event.type, enabled: true },
+    where: {
+      orgId: event.orgId,
+      eventType: event.type,
+      enabled: true,
+    },
     include: {
       sequence: { select: { id: true, enabled: true, steps: true, runtimeRules: true } },
     },
@@ -157,42 +179,56 @@ export async function materializeFromEvent(
         ...DEFAULT_RUNTIME_RULES,
         ...((trigger.ruleOverrides as object) ?? {}),
       };
+      const sourceEventId = crmTagEventId(event);
+      const eventCampaignId = sourceEventId
+        ? stableUuid(`crm-tag:${sourceEventId}:${trigger.id}:block`)
+        : null;
 
       // 1 campaign per trigger + 1 task per contact
-      let blockCampaign = await prisma.automationCampaign.findFirst({
-        where: {
+      let blockCampaign = eventCampaignId
+        ? await prisma.automationCampaign.findUnique({ where: { id: eventCampaignId }, select: { id: true } })
+        : await prisma.automationCampaign.findFirst({ where: {
           orgId: event.orgId,
           triggerId: trigger.id,
           blockId: trigger.blockId,
           state: 'active',
-        },
-        select: { id: true },
-      });
+        }, select: { id: true } });
       if (!blockCampaign) {
-        blockCampaign = await prisma.automationCampaign.create({
-          data: {
-            id: randomUUID(),
-            orgId: event.orgId,
-            triggerId: trigger.id,
-            executionKind: 'single_block',
-            blockId: trigger.blockId,
-            segmentSnapshot: { contactIds } as object,
-            rulesSnapshot: rulesSnapshot as object,
-            state: 'active',
-          },
-          select: { id: true },
+        try {
+          blockCampaign = await prisma.automationCampaign.create({
+            data: {
+              id: eventCampaignId ?? randomUUID(), orgId: event.orgId, triggerId: trigger.id,
+              executionKind: 'single_block', blockId: trigger.blockId,
+              segmentSnapshot: { contactIds } as object,
+              rulesSnapshot: rulesSnapshot as object, state: 'active',
+            },
+            select: { id: true },
+          });
+          result.campaignsCreated++;
+        } catch (error) {
+          if (!eventCampaignId || !isUniqueConflict(error)) throw error;
+          blockCampaign = await prisma.automationCampaign.findUniqueOrThrow({
+            where: { id: eventCampaignId }, select: { id: true },
+          });
+        }
+      } else if (!eventCampaignId) {
+        await prisma.automationCampaign.update({
+          where: { id: blockCampaign.id },
+          data: { rulesSnapshot: rulesSnapshot as object },
         });
-        result.campaignsCreated++;
       }
 
       // Apply jitter window for scheduling
-      const jitterMin = (rulesSnapshot.randomDelayPerSend?.min ?? 0) * 60 * 1000;
-      const jitterMax = (rulesSnapshot.randomDelayPerSend?.max ?? 0) * 60 * 1000;
+      const { min: jitterMin, max: jitterMax } = randomDelayRangeMs(rulesSnapshot);
       const baseNow = Date.now();
 
       for (const contactId of contactIds) {
         const existing = await prisma.automationTask.findFirst({
-          where: { campaignId: blockCampaign.id, contactId },
+          where: {
+            campaignId: blockCampaign.id,
+            contactId,
+            state: { in: ['queued', 'running', 'done'] },
+          },
           select: { id: true },
         });
         if (existing) {
@@ -202,9 +238,13 @@ export async function materializeFromEvent(
         }
         const jitter = jitterMin + Math.random() * Math.max(0, jitterMax - jitterMin);
         const scheduledAt = new Date(baseNow + jitter);
-        await prisma.automationTask.create({
-          data: {
-            id: randomUUID(),
+        const taskId = sourceEventId
+          ? stableUuid(`crm-tag-task:${sourceEventId}:${trigger.id}:${contactId}`)
+          : randomUUID();
+        try {
+          await prisma.automationTask.create({
+            data: {
+            id: taskId,
             orgId: event.orgId,
             campaignId: blockCampaign.id,
             contactId,
@@ -213,9 +253,14 @@ export async function materializeFromEvent(
             blockSnapshot: block.content as object,
             scheduledAt,
             state: 'queued',
-          },
-        });
-        result.tasksEnqueued++;
+            },
+          });
+          result.tasksEnqueued++;
+        } catch (error) {
+          if (!sourceEventId || !isUniqueConflict(error)) throw error;
+          result.skipped++;
+          result.reasons.push(`event ${sourceEventId}: task already materialized`);
+        }
       }
       continue; // done with this trigger
     }
@@ -259,33 +304,44 @@ export async function materializeFromEvent(
       ...(trigger.sequence.runtimeRules as object),
       ...((trigger.ruleOverrides as object) ?? {}),
     };
+    const sourceEventId = crmTagEventId(event);
+    const eventCampaignId = sourceEventId
+      ? stableUuid(`crm-tag:${sourceEventId}:${trigger.id}:sequence`)
+      : null;
 
     // 5. Find or create active campaign for this trigger + sequence
     // (1 campaign per trigger × sequence; tasks span all contacts under it)
-    let campaign = await prisma.automationCampaign.findFirst({
-      where: {
+    let campaign = eventCampaignId
+      ? await prisma.automationCampaign.findUnique({ where: { id: eventCampaignId }, select: { id: true } })
+      : await prisma.automationCampaign.findFirst({ where: {
         orgId: event.orgId,
         triggerId: trigger.id,
         sequenceId: trigger.sequenceId,
         state: 'active',
-      },
-      select: { id: true },
-    });
+      }, select: { id: true } });
     if (!campaign) {
-      campaign = await prisma.automationCampaign.create({
-        data: {
-          id: randomUUID(),
-          orgId: event.orgId,
-          triggerId: trigger.id,
-          executionKind: 'sequence',
-          sequenceId: trigger.sequenceId,
-          segmentSnapshot: { contactIds } as object,
-          rulesSnapshot: rulesSnapshot as object,
-          state: 'active',
-        },
-        select: { id: true },
+      try {
+        campaign = await prisma.automationCampaign.create({
+          data: {
+            id: eventCampaignId ?? randomUUID(), orgId: event.orgId, triggerId: trigger.id,
+            executionKind: 'sequence', sequenceId: trigger.sequenceId,
+            segmentSnapshot: { contactIds } as object,
+            rulesSnapshot: rulesSnapshot as object, state: 'active',
+          },
+          select: { id: true },
+        });
+        result.campaignsCreated++;
+      } catch (error) {
+        if (!eventCampaignId || !isUniqueConflict(error)) throw error;
+        campaign = await prisma.automationCampaign.findUniqueOrThrow({
+          where: { id: eventCampaignId }, select: { id: true },
+        });
+      }
+    } else if (!eventCampaignId) {
+      await prisma.automationCampaign.update({
+        where: { id: campaign.id },
+        data: { rulesSnapshot: rulesSnapshot as object },
       });
-      result.campaignsCreated++;
     }
 
     // 6. Load the first step's block to snapshot content
@@ -304,7 +360,11 @@ export async function materializeFromEvent(
     const now = Date.now();
     for (const contactId of contactIds) {
       const existing = await prisma.automationTask.findFirst({
-        where: { campaignId: campaign.id, contactId },
+        where: {
+          campaignId: campaign.id,
+          contactId,
+          state: { in: ['queued', 'running', 'done'] },
+        },
         select: { id: true },
       });
       if (existing) {
@@ -314,14 +374,17 @@ export async function materializeFromEvent(
       }
 
       // Schedule first step. delayMinutes from step + jitter from runtime rule.
-      const jitterMin = (rulesSnapshot.randomDelayPerSend?.min ?? 0) * 60 * 1000;
-      const jitterMax = (rulesSnapshot.randomDelayPerSend?.max ?? 0) * 60 * 1000;
+      const { min: jitterMin, max: jitterMax } = randomDelayRangeMs(rulesSnapshot);
       const jitter = jitterMin + Math.random() * Math.max(0, jitterMax - jitterMin);
       const scheduledAt = new Date(now + firstStep.delayMinutes * 60 * 1000 + jitter);
 
-      await prisma.automationTask.create({
-        data: {
-          id: randomUUID(),
+      const taskId = sourceEventId
+        ? stableUuid(`crm-tag-task:${sourceEventId}:${trigger.id}:${contactId}`)
+        : randomUUID();
+      try {
+        await prisma.automationTask.create({
+          data: {
+          id: taskId,
           orgId: event.orgId,
           campaignId: campaign.id,
           contactId,
@@ -331,9 +394,14 @@ export async function materializeFromEvent(
           blockSnapshot: firstBlock.content as object, // SNAPSHOT — frozen content
           scheduledAt,
           state: 'queued',
-        },
-      });
-      result.tasksEnqueued++;
+          },
+        });
+        result.tasksEnqueued++;
+      } catch (error) {
+        if (!sourceEventId || !isUniqueConflict(error)) throw error;
+        result.skipped++;
+        result.reasons.push(`event ${sourceEventId}: task already materialized`);
+      }
     }
   }
 

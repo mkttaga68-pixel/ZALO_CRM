@@ -9,6 +9,7 @@ import {
   validateSteps,
   validateRuntimeRules,
   DEFAULT_RUNTIME_RULES,
+  randomDelayRangeMs,
 } from '../src/modules/automation/sequences/types.js';
 
 describe('validateSteps', () => {
@@ -103,6 +104,20 @@ describe('validateRuntimeRules', () => {
   it('rejects negative delay min', () => {
     const r = validateRuntimeRules({ randomDelayPerSend: { min: -1, max: 10 } });
     expect(r.ok).toBe(false);
+  });
+
+  it('accepts seconds delay and rejects values over one hour', () => {
+    expect(validateRuntimeRules({ randomDelayPerSendSeconds: { min: 5, max: 30 } }).ok).toBe(true);
+    expect(validateRuntimeRules({ randomDelayPerSendSeconds: { min: 5, max: 3601 } }).ok).toBe(false);
+  });
+
+  it('prefers seconds delay while preserving legacy minute compatibility', () => {
+    expect(randomDelayRangeMs({ randomDelayPerSend: { min: 1, max: 2 } }))
+      .toEqual({ min: 60_000, max: 120_000 });
+    expect(randomDelayRangeMs({
+      randomDelayPerSend: { min: 1, max: 2 },
+      randomDelayPerSendSeconds: { min: 5, max: 30 },
+    })).toEqual({ min: 5_000, max: 30_000 });
   });
 
   it('rejects non-boolean perNickThrottle', () => {
