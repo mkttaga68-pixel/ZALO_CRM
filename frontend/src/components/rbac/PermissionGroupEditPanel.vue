@@ -328,6 +328,8 @@ const RESOURCE_LABELS: Record<string, string> = {
   conversation: 'Hội thoại',
   contact: 'Khách hàng',
   friend: 'Friends Zalo',
+  posting: 'Đăng bài (Đăng nhóm / Chào hàng)',
+  bot_auto: 'Bot-Auto (công tắc tổng)',
   customer_list: 'Tệp khách hàng',
   broadcast: 'Chiến dịch',
   sequence: 'Sequence',

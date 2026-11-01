@@ -87,6 +87,7 @@ import { eventBuffer } from './shared/event-buffer.js';
 // Plugin architecture — xem core/plugin-host.ts
 import { buildContext } from './core/build-context.js';
 import { loadPlugins } from './core/plugin-host.js';
+import { optionalAuthMiddleware } from './modules/auth/auth-middleware.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -110,13 +111,7 @@ async function bootstrap() {
   // return 401 when `request.user` is absent). Verification failure is swallowed
   // so public routes (login, health, webhooks) keep working. This gives every
   // route — including those registered by plugins — a consistent `request.user`.
-  app.addHook('onRequest', async (request) => {
-    try {
-      await request.jwtVerify();
-    } catch {
-      /* no / invalid token → leave request.user undefined, let the route decide */
-    }
-  });
+  app.addHook('onRequest', optionalAuthMiddleware);
 
   await app.register(rateLimit, {
     max: 500,
@@ -254,12 +249,12 @@ async function bootstrap() {
   await app.register(credentialRoutes);
 
   // Liveness/readiness probe — also checks DB connectivity
-  app.get('/health', async () => {
+  app.get('/health', async (_request, reply) => {
     try {
       await prisma.$queryRaw`SELECT 1`;
       return { status: 'ok', db: 'connected', timestamp: new Date().toISOString() };
     } catch {
-      return { status: 'error', db: 'disconnected', timestamp: new Date().toISOString() };
+      return reply.code(503).send({ status: 'error', db: 'disconnected', timestamp: new Date().toISOString() });
     }
   });
 

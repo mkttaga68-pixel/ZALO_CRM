@@ -29,8 +29,12 @@ COPY --from=backend-builder /app/backend/package.json /app/package.json
 COPY --from=frontend-builder /app/frontend/dist     /app/static
 
 RUN mkdir -p /var/lib/zalo-crm/files
+COPY scripts/readiness-probe.cjs /app/scripts/readiness-probe.cjs
+COPY scripts/bot-auto-backfill.cjs /app/scripts/bot-auto-backfill.cjs
+COPY scripts/manual-posting-migrate.cjs /app/scripts/manual-posting-migrate.cjs
 
 EXPOSE 3000
 ENTRYPOINT ["/sbin/tini", "--"]
-# Push schema to DB then start server
-CMD ["sh", "-c", "npx prisma db push --url \"$DATABASE_URL\" && node dist/app.js"]
+# Schema/data migration is an explicit release operation, never a restart side effect.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 CMD ["node", "scripts/readiness-probe.cjs"]
+CMD ["sh", "-c", "node scripts/bot-auto-backfill.cjs --check && exec node dist/app.js"]

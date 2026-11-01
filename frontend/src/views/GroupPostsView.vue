@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { api } from '@/api';
+import ManualPostingPanel from '@/components/posting/ManualPostingPanel.vue';
 
 interface GroupResult {
   groupId: string;
@@ -101,11 +102,14 @@ onMounted(fetchLogs);
 <template>
   <v-container fluid class="pa-4">
     <div class="d-flex align-center mb-4">
-      <h2 class="text-h5 font-weight-bold">📢 Nhật ký đăng bài vào nhóm</h2>
+      <h2 class="text-h5 font-weight-bold">📢 Đăng nhóm</h2>
       <v-spacer />
       <v-btn variant="text" :loading="loading" prepend-icon="mdi-refresh" @click="fetchLogs">Tải lại</v-btn>
     </div>
 
+    <ManualPostingPanel kind="GROUP" />
+
+    <h3 class="text-subtitle-1 mb-2">Nhật ký đăng nhóm từ BOT</h3>
     <p class="text-body-2 text-medium-emphasis mb-4">
       Ghi nhận các bài đăng từ bot nội bộ bắn qua. Mỗi dòng là 1 lần đăng; bấm để xem kết quả từng nhóm và soi lỗi.
     </p>

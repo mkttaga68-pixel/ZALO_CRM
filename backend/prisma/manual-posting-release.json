@@ -1,0 +1,10 @@
+{
+  "feature": "manual-posting",
+  "migration": "20261031180000_manual_posting",
+  "sha256": "0e3af34b6145a7f586d3a89109b6bde547792b8dde0d45ced72685a695544b84",
+  "tables": ["manual_posting_jobs", "manual_posting_recipients"],
+  "schema": "public",
+  "history": "_prisma_migrations",
+  "historicalMigrations": "NOT_EXECUTED_OR_BASELINED",
+  "permission": "posting.access is JSON grants; no database migration or automatic grant assignment"
+}

@@ -55,6 +55,15 @@ describe('validateSteps', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('accepts delays of 30 days and exactly 60 days', () => {
+    expect(validateSteps([
+      { stepId: 's1', blockId: 'b1', delayMinutes: 30 * 1440 },
+    ]).ok).toBe(true);
+    expect(validateSteps([
+      { stepId: 's1', blockId: 'b1', delayMinutes: 60 * 1440 },
+    ]).ok).toBe(true);
+  });
+
   it('accepts same blockId reused across steps (resend block in sequence)', () => {
     const r = validateSteps([
       { stepId: 's1', blockId: 'b-greet', delayMinutes: 0 },

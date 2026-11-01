@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { api } from '@/api';
+import ManualPostingPanel from '@/components/posting/ManualPostingPanel.vue';
 
 interface ChaoHangJob {
   id: string;
@@ -130,6 +131,9 @@ onMounted(fetchJobs);
       <v-btn variant="text" :loading="loading" prepend-icon="mdi-refresh" @click="fetchJobs">Tải lại</v-btn>
     </div>
 
+    <ManualPostingPanel kind="OFFER" />
+
+    <h3 class="text-subtitle-1 mb-2">Nhật ký chào hàng từ BOT</h3>
     <p class="text-body-2 text-medium-emphasis mb-4">
       Job chào hàng do BOT nội bộ bắn sang; CRM gửi ảnh chào hàng theo tier khách qua 1 nick cố định.
       Mỗi dòng là 1 job; bấm để xem kết quả gửi từng khách.

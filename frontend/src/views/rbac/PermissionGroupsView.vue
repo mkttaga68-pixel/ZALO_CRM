@@ -144,10 +144,19 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="r in resources" :key="r" :class="{ 'row-full': rowFull(r), 'row-empty': rowEmpty(r) }">
+                <tr
+                  v-for="r in resources"
+                  :key="r"
+                  :class="{ 'row-full': rowFull(r), 'row-empty': rowEmpty(r), 'row-module-off': isModuleOff(r) }"
+                >
                   <td class="cell-resource">
                     <span class="resource-icon">{{ resourceIcon(r) }}</span>
                     <span class="resource-label">{{ resourceLabel(r) }}</span>
+                    <span
+                      v-if="isModuleOff(r)"
+                      class="resource-off-tag"
+                      :title="`Tắt vì ${resourceLabel(moduleOf(r)!)} đang tắt — bật dòng đó để các ô dưới đây có hiệu lực.`"
+                    >⛔ module tắt</span>
                     <span class="resource-count">{{ rowCount(r) }}/{{ (resourceActions[r] ?? []).length }}</span>
                   </td>
                   <td v-for="a in actions" :key="a" class="cell-check">
@@ -342,6 +351,8 @@ const RESOURCE_LABELS: Record<string, { icon: string; label: string }> = {
   conversation: { icon: '💬', label: 'Hội thoại' },
   contact: { icon: '👥', label: 'Khách hàng' },
   friend: { icon: '🫂', label: 'Friends Zalo' },
+  posting: { icon: '📢', label: 'Đăng bài (Đăng nhóm / Chào hàng)' },
+  bot_auto: { icon: '🤖', label: 'Bot-Auto (công tắc tổng)' },
   customer_list: { icon: '📋', label: 'Tệp khách hàng' },
   broadcast: { icon: '📢', label: 'Chiến dịch' },
   sequence: { icon: '🔁', label: 'Sequence' },
@@ -397,6 +408,26 @@ function rowFull(r: string): boolean {
 }
 function rowEmpty(r: string): boolean {
   return rowCount(r) === 0;
+}
+
+// ─── Module gate (Bot-Auto) ───
+// Mirror RESOURCE_MODULE ở backend: 5 resource con chỉ có hiệu lực khi công tắc
+// tổng 'bot_auto' đang bật. Hiển thị mờ + nhãn "module tắt" để admin không tick
+// nhầm rồi tưởng đã cấp quyền.
+const RESOURCE_MODULE: Record<string, string> = {
+  customer_list: 'bot_auto',
+  broadcast: 'bot_auto',
+  sequence: 'bot_auto',
+  trigger: 'bot_auto',
+  block: 'bot_auto',
+};
+function moduleOf(r: string): string | undefined {
+  return RESOURCE_MODULE[r];
+}
+function isModuleOff(r: string): boolean {
+  const m = RESOURCE_MODULE[r];
+  if (!m || !selected.value) return false;
+  return selected.value.grants?.[m]?.access !== true;
 }
 
 // ─── Grant mutations (auto-save) ───
@@ -795,6 +826,28 @@ async function seedDefaults() {
   background: #d8ecda;
   color: #0a2e0e;
   font-weight: 600;
+}
+
+/* Module gate: resource con bị vô hiệu vì công tắc tổng (Bot-Auto) đang tắt.
+   Vẫn tick được — tick giữ lại để bật module là có hiệu lực ngay — nhưng mờ đi
+   kèm nhãn để không ai hiểu nhầm là đang có quyền. */
+.pg-matrix tbody tr.row-module-off .cell-check,
+.pg-matrix tbody tr.row-module-off .resource-label,
+.pg-matrix tbody tr.row-module-off .resource-icon,
+.pg-matrix tbody tr.row-module-off .resource-count {
+  opacity: 0.45;
+}
+.resource-off-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: #8a5a00;
+  background: #fdf3e0;
+  border: 1px solid #f0dcb4;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  white-space: nowrap;
+  cursor: help;
+  flex-shrink: 0;
 }
 
 /* Airtable checkbox */

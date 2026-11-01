@@ -15,6 +15,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../../shared/database/prisma-client.js';
 import { authMiddleware } from '../../auth/auth-middleware.js';
+import { requireGrant } from '../../rbac/rbac-middleware.js';
 import { logger } from '../../../shared/utils/logger.js';
 import { parseAndDedup, parseRawText, detectInternalDup } from './list-import-service.js';
 import { kickoffEnrichment } from './list-enrichment-service.js';
@@ -23,6 +24,21 @@ import { randomUUID } from 'node:crypto';
 
 export async function customerListRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
+  app.addHook('preHandler', async (request, reply) => {
+    const path = request.url.split('?')[0].replace(/\/$/, '');
+    const action = request.method === 'GET'
+      ? 'access'
+      : request.method === 'DELETE'
+        ? 'delete'
+        : request.method === 'POST' && path.endsWith('/dry-run')
+          ? 'access'
+          : request.method === 'POST' && path.endsWith('/archive')
+            ? 'delete'
+            : request.method === 'POST' && path === '/api/v1/customer-lists'
+              ? 'create'
+              : 'edit';
+    return requireGrant('customer_list', action)(request, reply);
+  });
 
   // ─── GET /customer-lists — list all (filter active|archived|all) ───
   app.get<{ Querystring: { status?: string; page?: string; limit?: string; search?: string } }>(

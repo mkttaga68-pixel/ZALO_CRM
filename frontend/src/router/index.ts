@@ -1,6 +1,7 @@
 // Đã sửa bởi TAKI Academy (09/2026): thêm tính năng AI trả lời tự động. Xem NGUON-GOC.md.
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { firstBotAutoRoute } from './bot-auto-navigation';
 
 const routes = [
   {
@@ -66,13 +67,13 @@ const routes = [
     path: '/group-posts',
     name: 'GroupPosts',
     component: () => import('@/views/GroupPostsView.vue'),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, rbacResource: 'posting' },
   },
   {
     path: '/chao-hang',
     name: 'ChaoHang',
     component: () => import('@/views/ChaoHangView.vue'),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, rbacResource: 'posting' },
   },
   // ════════ NEW Settings — 6-group sidebar layout ════════
   {
@@ -163,14 +164,13 @@ const routes = [
     path: '/automation/bot',
     component: () => import('@/views/automation/BotAutoShell.vue'),
     meta: { requiresAuth: true },
-    redirect: '/automation/bot/triggers',
     children: [
-      { path: 'triggers',   name: 'BotAuto.Triggers',   component: () => import('@/views/automation/TriggersView.vue') },
-      { path: 'blocks',     name: 'BotAuto.Blocks',     component: () => import('@/views/automation/BlocksView.vue') },
-      { path: 'sequences',  name: 'BotAuto.Sequences',  component: () => import('@/views/automation/SequencesView.vue') },
-      { path: 'broadcasts', name: 'BotAuto.Broadcasts', component: () => import('@/views/automation/BroadcastsView.vue') },
-      { path: 'lists',      name: 'BotAuto.Lists',      component: () => import('@/views/automation/ListsView.vue') },
-      { path: 'lists/:id',  name: 'BotAuto.ListDetail', component: () => import('@/views/automation/ListDetailView.vue') },
+      { path: 'triggers',   name: 'BotAuto.Triggers',   component: () => import('@/views/automation/TriggersView.vue'), meta: { rbacResource: 'trigger' } },
+      { path: 'blocks',     name: 'BotAuto.Blocks',     component: () => import('@/views/automation/BlocksView.vue'), meta: { rbacResource: 'block' } },
+      { path: 'sequences',  name: 'BotAuto.Sequences',  component: () => import('@/views/automation/SequencesView.vue'), meta: { rbacResource: 'sequence' } },
+      { path: 'broadcasts', name: 'BotAuto.Broadcasts', component: () => import('@/views/automation/BroadcastsView.vue'), meta: { rbacResource: 'broadcast' } },
+      { path: 'lists',      name: 'BotAuto.Lists',      component: () => import('@/views/automation/ListsView.vue'), meta: { rbacResource: 'customer_list' } },
+      { path: 'lists/:id',  name: 'BotAuto.ListDetail', component: () => import('@/views/automation/ListDetailView.vue'), meta: { rbacResource: 'customer_list' } },
     ],
   },
   {
@@ -231,11 +231,26 @@ router.beforeEach(async (to, _from, next) => {
     }
     // Fetch profile if not loaded yet
     if (!authStore.user) {
-      await authStore.init();
+      try { await authStore.init(); }
+      catch {
+        // Keep credentials on temporary failures, but never open a protected view
+        // without a verified profile. App.vue displays the retryable error.
+        if (!authStore.token) return next('/login');
+        return next(false);
+      }
       if (!authStore.isAuthenticated) {
         return next('/login');
       }
     }
+  }
+
+  if (to.path === '/automation/bot' || to.path === '/automation/bot/') {
+    return next(firstBotAutoRoute(authStore.hasGrant) ?? '/');
+  }
+
+  const rbacResource = to.meta.rbacResource as string | undefined;
+  if (rbacResource && !authStore.hasGrant(rbacResource, 'access')) {
+    return next('/');
   }
 
   next();

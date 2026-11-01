@@ -20,6 +20,7 @@ import { normalizePhone } from '../../shared/utils/phone.js';
 import { buildDeletionPreview, deleteUserPermanently } from './user-delete-service.js';
 import { randomUUID } from 'node:crypto';
 import { logger } from '../../shared/utils/logger.js';
+import { revokeUserSockets } from '../../shared/socket-revocation.js';
 
 // Generic message used for any validation rejection on user mutation.
 // Don't differentiate "email exists" vs "invalid format" — that's the oracle.
@@ -191,6 +192,7 @@ export async function userRoutes(app: FastifyInstance) {
       throw err;
     }
 
+    if (role !== undefined || isActive !== undefined) revokeUserSockets(currentUser.orgId, id);
     return user;
   });
 
@@ -251,6 +253,7 @@ export async function userRoutes(app: FastifyInstance) {
         where: { id, orgId: currentUser.orgId },
         data: { isActive: false },
       });
+      revokeUserSockets(currentUser.orgId, id);
       return { success: true, mode: 'deactivate' };
     }
 
@@ -276,6 +279,7 @@ export async function userRoutes(app: FastifyInstance) {
       return reply.status(m.code).send({ error: m.msg, code: res.error });
     }
 
+    revokeUserSockets(currentUser.orgId, id);
     return { success: true, mode: 'hard', ...res.result };
   });
 

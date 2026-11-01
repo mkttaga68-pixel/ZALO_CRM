@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const prismaMock = {
   zaloAccount: { findFirst: vi.fn() },
+  user: { findUnique: vi.fn() },
 };
 
 vi.mock('../src/shared/database/prisma-client.js', () => ({ prisma: prismaMock }));
@@ -31,6 +32,7 @@ type Handshake = { auth?: Record<string, unknown>; headers?: Record<string, unkn
 function fakeSocket(handshake: Handshake = {}) {
   return {
     id: 'sock-1',
+    use: vi.fn(), once: vi.fn(), disconnect: vi.fn(),
     handshake: { auth: handshake.auth ?? {}, headers: handshake.headers ?? {} },
     data: {} as Record<string, unknown>,
     rooms: new Set<string>(),
@@ -71,48 +73,49 @@ const validPayload = { id: USER_A, email: 'a@example.com', role: 'owner', orgId:
 
 beforeEach(() => {
   prismaMock.zaloAccount.findFirst.mockReset();
+  prismaMock.user.findUnique.mockResolvedValue({ id: USER_A, orgId: ORG_A, role: 'owner', isActive: true });
 });
 
 describe('registerSocketAuth — handshake', () => {
-  it('TỪ CHỐI khi không có token', () => {
+  it('TỪ CHỐI khi không có token', async () => {
     const mw = buildAuthMiddleware(() => validPayload);
     const next = vi.fn();
-    mw(fakeSocket(), next);
+    await mw(fakeSocket(), next);
     expect(next).toHaveBeenCalledTimes(1);
     expect(next.mock.calls[0][0]).toBeInstanceOf(Error);
     expect((next.mock.calls[0][0] as Error).message).toBe('UNAUTHORIZED');
   });
 
-  it('TỪ CHỐI khi token không verify được (sai chữ ký / hết hạn)', () => {
+  it('TỪ CHỐI khi token không verify được (sai chữ ký / hết hạn)', async () => {
     const mw = buildAuthMiddleware(() => {
       throw new Error('invalid signature');
     });
     const next = vi.fn();
     const socket = fakeSocket({ auth: { token: 'rác' } });
-    mw(socket, next);
+    await mw(socket, next);
     expect((next.mock.calls[0][0] as Error).message).toBe('UNAUTHORIZED');
     expect(socket.data.identity).toBeUndefined();
   });
 
-  it('TỪ CHỐI token hợp lệ về chữ ký nhưng thiếu orgId', () => {
+  it('TỪ CHỐI token hợp lệ về chữ ký nhưng thiếu orgId', async () => {
     const mw = buildAuthMiddleware(() => ({ id: USER_A, role: 'owner' }));
     const next = vi.fn();
-    mw(fakeSocket({ auth: { token: 't' } }), next);
+    await mw(fakeSocket({ auth: { token: 't' } }), next);
     expect((next.mock.calls[0][0] as Error).message).toBe('UNAUTHORIZED');
   });
 
-  it('TỪ CHỐI token thiếu id', () => {
+  it('TỪ CHỐI token thiếu id', async () => {
     const mw = buildAuthMiddleware(() => ({ orgId: ORG_A, role: 'owner' }));
     const next = vi.fn();
-    mw(fakeSocket({ auth: { token: 't' } }), next);
+    await mw(fakeSocket({ auth: { token: 't' } }), next);
     expect((next.mock.calls[0][0] as Error).message).toBe('UNAUTHORIZED');
   });
 
-  it('CHO QUA token hợp lệ và gắn định danh từ token', () => {
+  it('CHO QUA token hợp lệ và gắn định danh từ token', async () => {
     const mw = buildAuthMiddleware(() => validPayload);
     const next = vi.fn();
     const socket = fakeSocket({ auth: { token: 'tốt' } });
-    mw(socket, next);
+    await mw(socket, next);
     expect(next).toHaveBeenCalledWith();
     expect(socketIdentity(socket as never)).toEqual({
       userId: USER_A,
@@ -122,32 +125,32 @@ describe('registerSocketAuth — handshake', () => {
     });
   });
 
-  it('nhận token qua header Authorization (client không phải browser)', () => {
+  it('nhận token qua header Authorization (client không phải browser)', async () => {
     const mw = buildAuthMiddleware(() => validPayload);
     const next = vi.fn();
     const socket = fakeSocket({ headers: { authorization: 'Bearer tốt' } });
-    mw(socket, next);
+    await mw(socket, next);
     expect(next).toHaveBeenCalledWith();
     expect(socketIdentity(socket as never).orgId).toBe(ORG_A);
   });
 
-  it('mặc định role = member khi token không có claim role', () => {
+  it('từ chối khi token thiếu claim role', async () => {
     const mw = buildAuthMiddleware(() => ({ id: USER_A, orgId: ORG_A }));
     const socket = fakeSocket({ auth: { token: 't' } });
-    mw(socket, vi.fn());
-    expect(socketIdentity(socket as never).role).toBe('member');
+    await mw(socket, vi.fn());
+    expect(socket.data.identity).toBeUndefined();
   });
 
-  it('KHÔNG đọc token từ query string — chỉ auth hoặc header', () => {
+  it('KHÔNG đọc token từ query string — chỉ auth hoặc header', async () => {
     const mw = buildAuthMiddleware(() => validPayload);
     const next = vi.fn();
-    mw(fakeSocket({ auth: {}, headers: { 'x-token': 'tốt' } }), next);
+    await mw(fakeSocket({ auth: {}, headers: { 'x-token': 'tốt' } }), next);
     expect((next.mock.calls[0][0] as Error).message).toBe('UNAUTHORIZED');
   });
 });
 
 describe('org:join — room suy ra từ token, KHÔNG từ payload client', () => {
-  it('join đúng org trong token, BỎ QUA orgId client gửi', () => {
+  it('join đúng org trong token, BỎ QUA orgId client gửi', async () => {
     const socket = fakeSocket();
     socket.data.identity = { userId: USER_A, orgId: ORG_A, role: 'owner' };
     const events = buildZaloHandlers(socket);
@@ -159,7 +162,7 @@ describe('org:join — room suy ra từ token, KHÔNG từ payload client', () =
     expect(socket.rooms.has(`org:${ORG_B}`)).toBe(false);
   });
 
-  it('không gửi payload vẫn join được org của mình', () => {
+  it('không gửi payload vẫn join được org của mình', async () => {
     const socket = fakeSocket();
     socket.data.identity = { userId: USER_A, orgId: ORG_A, role: 'owner' };
     const events = buildZaloHandlers(socket);
@@ -219,7 +222,7 @@ describe('zalo:subscribe — chặn nghe room account của org khác', () => {
     expect(socket.rooms.size).toBe(0);
   });
 
-  it('unsubscribe chỉ rời room của chính socket, không cần kiểm tra quyền', () => {
+  it('unsubscribe chỉ rời room của chính socket, không cần kiểm tra quyền', async () => {
     const socket = fakeSocket();
     socket.data.identity = { userId: USER_A, orgId: ORG_A, role: 'owner' };
     socket.rooms.add('account:acc-1');

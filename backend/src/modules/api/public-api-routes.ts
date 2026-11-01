@@ -11,6 +11,7 @@ import path from 'node:path';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { assertSafeOutboundUrl, SsrfBlockedError } from '../../shared/utils/ssrf-guard.js';
 import { logger } from '../../shared/utils/logger.js';
+import { safeOutboundFetch } from '../../shared/utils/safe-outbound-fetch.js';
 
 // Public API image-send limits. Ảnh tải từ URL (HTTPS only — qua ssrf-guard).
 const PUBLIC_IMAGE_MAX = 25 * 1024 * 1024; // 25MB/ảnh
@@ -28,7 +29,7 @@ const PUBLIC_IMAGE_EXT: Record<string, string> = {
  */
 async function downloadImage(rawUrl: string): Promise<{ buffer: Buffer; ext: string }> {
   const safeUrl = assertSafeOutboundUrl(rawUrl); // throws SsrfBlockedError nếu không hợp lệ/HTTP/private
-  const res = await fetch(safeUrl.toString(), { signal: AbortSignal.timeout(15_000) });
+  const res = await safeOutboundFetch(safeUrl.toString(), { signal: AbortSignal.timeout(15_000), maxBytes: PUBLIC_IMAGE_MAX });
   if (!res.ok) throw new Error(`fetch ${res.status}`);
   const mime = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
   const ext = PUBLIC_IMAGE_EXT[mime];

@@ -268,9 +268,10 @@ export async function userHasGrant(
       permissionGroupId: true,
       permissionGroup: { select: { grants: true, archivedAt: true } },
       role: true, // legacy fallback
+      isActive: true,
     },
   });
-  if (!user) return false;
+  if (!user || !user.isActive) return false;
 
   // Permission group active
   if (user.permissionGroup && !user.permissionGroup.archivedAt) {

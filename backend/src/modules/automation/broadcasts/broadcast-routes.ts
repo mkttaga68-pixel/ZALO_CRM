@@ -19,7 +19,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../../../shared/database/prisma-client.js';
 import { authMiddleware } from '../../auth/auth-middleware.js';
-import { requireRole } from '../../auth/role-middleware.js';
+import { requireGrant } from '../../rbac/rbac-middleware.js';
 import { logger } from '../../../shared/utils/logger.js';
 import { sanitizeContactCriteria, sanitizeManualContactIds } from '../engine/segment-sanitizer.js';
 
@@ -89,7 +89,7 @@ export async function broadcastRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
 
   // List
-  app.get(BASE, async (request: FastifyRequest) => {
+  app.get(BASE, { preHandler: requireGrant('broadcast', 'access') }, async (request: FastifyRequest) => {
     const user = request.user!;
     const q = request.query as Record<string, string | undefined>;
     const where: Record<string, unknown> = { orgId: user.orgId };
@@ -107,7 +107,7 @@ export async function broadcastRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Detail
-  app.get(`${BASE}/:id`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get(`${BASE}/:id`, { preHandler: requireGrant('broadcast', 'access') }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
     const bc = await prisma.automationBroadcast.findFirst({
@@ -128,7 +128,7 @@ export async function broadcastRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Create (always starts as draft)
-  app.post(BASE, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(BASE, { preHandler: requireGrant('broadcast', 'create') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const body = request.body as Record<string, any>;
@@ -181,7 +181,7 @@ export async function broadcastRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Update (draft state only — running broadcasts are immutable for safety)
-  app.put(`${BASE}/:id`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.put(`${BASE}/:id`, { preHandler: requireGrant('broadcast', 'edit') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
@@ -217,7 +217,7 @@ export async function broadcastRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Preview — dry-run resolve segment to recipient count
-  app.post(`${BASE}/:id/preview`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(`${BASE}/:id/preview`, { preHandler: requireGrant('broadcast', 'access') }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
     const bc = await prisma.automationBroadcast.findFirst({
@@ -250,7 +250,7 @@ export async function broadcastRoutes(app: FastifyInstance): Promise<void> {
   // FIX A3: previously did find-then-update — concurrent scheduler + manual /start
   // could double-fire. Now both code paths route through resolveAndEnqueue()
   // which does updateMany({state: in [draft,scheduled,paused]}) → running atomically.
-  app.post(`${BASE}/:id/start`, { preHandler: requireRole('owner', 'admin') }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(`${BASE}/:id/start`, { preHandler: requireGrant('broadcast', 'approve') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
@@ -285,7 +285,7 @@ export async function broadcastRoutes(app: FastifyInstance): Promise<void> {
 
   // Pause — running → paused. Existing queued tasks stay queued but worker
   // skips them when it sees Campaign.state='paused'.
-  app.post(`${BASE}/:id/pause`, { preHandler: requireRole('owner', 'admin') }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(`${BASE}/:id/pause`, { preHandler: requireGrant('broadcast', 'approve') }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
     const bc = await prisma.automationBroadcast.findFirst({ where: { id, orgId: user.orgId }, select: { state: true } });
@@ -303,7 +303,7 @@ export async function broadcastRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Resume — paused → running
-  app.post(`${BASE}/:id/resume`, { preHandler: requireRole('owner', 'admin') }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(`${BASE}/:id/resume`, { preHandler: requireGrant('broadcast', 'approve') }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
     const bc = await prisma.automationBroadcast.findFirst({ where: { id, orgId: user.orgId }, select: { state: true } });
@@ -321,7 +321,7 @@ export async function broadcastRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Cancel — any → cancelled. Marks queued tasks as skipped so worker won't pick them.
-  app.post(`${BASE}/:id/cancel`, { preHandler: requireRole('owner', 'admin') }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(`${BASE}/:id/cancel`, { preHandler: requireGrant('broadcast', 'approve') }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
     const bc = await prisma.automationBroadcast.findFirst({ where: { id, orgId: user.orgId }, select: { state: true } });
@@ -348,7 +348,7 @@ export async function broadcastRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Delete — only draft state
-  app.delete(`${BASE}/:id`, { preHandler: requireRole('owner', 'admin') }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.delete(`${BASE}/:id`, { preHandler: requireGrant('broadcast', 'delete') }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
     const bc = await prisma.automationBroadcast.findFirst({ where: { id, orgId: user.orgId }, select: { state: true } });

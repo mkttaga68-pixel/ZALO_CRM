@@ -30,7 +30,7 @@
 
       <nav class="sidebar-nav">
         <RouterLink
-          v-for="item in navItems"
+          v-for="item in visibleNavItems"
           :key="item.to"
           :to="item.to"
           class="sidebar-link"
@@ -63,9 +63,11 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
 import '@/components/automation/phase7/airtable.css';
 
 const route = useRoute();
+const authStore = useAuthStore();
 const drawerOpen = ref(false);
 
 const navItems = [
@@ -76,8 +78,19 @@ const navItems = [
   { to: '/automation/bot/lists',      label: 'Tệp khách hàng',            icon: 'mdi-folder-account' },
 ];
 
+const navResources: Record<string, string> = {
+  '/automation/bot/triggers': 'trigger',
+  '/automation/bot/blocks': 'block',
+  '/automation/bot/sequences': 'sequence',
+  '/automation/bot/broadcasts': 'broadcast',
+  '/automation/bot/lists': 'customer_list',
+};
+const visibleNavItems = computed(() =>
+  navItems.filter((item) => authStore.hasGrant(navResources[item.to], 'access')),
+);
+
 const activeNavLabel = computed(() => {
-  const match = navItems.find((n) => route.path.startsWith(n.to));
+  const match = visibleNavItems.value.find((n) => route.path.startsWith(n.to));
   return match?.label ?? 'Bot-Auto';
 });
 

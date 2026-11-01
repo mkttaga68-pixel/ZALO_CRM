@@ -51,6 +51,27 @@
 
       <!-- Trailing dropdowns (luôn hiển thị, không bị overflow) -->
       <div class="nav-trailing">
+        <v-menu v-if="authStore.hasGrant('posting', 'access')" open-on-hover>
+          <template #activator="{ props: act }">
+            <button
+              type="button"
+              class="nav-tab"
+              :class="{ active: route.path === '/group-posts' || route.path === '/chao-hang' }"
+              v-bind="act"
+            >
+              <span class="ic">📢</span>Đăng bài<span class="caret">▾</span>
+            </button>
+          </template>
+          <v-list density="compact" min-width="200">
+            <v-list-item to="/group-posts" title="Đăng nhóm">
+              <template #prepend><span class="overflow-ic">📢</span></template>
+            </v-list-item>
+            <v-list-item to="/chao-hang" title="Chào hàng">
+              <template #prepend><span class="overflow-ic">🛍️</span></template>
+            </v-list-item>
+          </v-list>
+        </v-menu>
+
         <!-- Legacy automation dropdown (kept for backward compat — Phase 7 Bot-Auto
              is now a top-level primary tab via primaryTabs array above) -->
         <v-menu open-on-hover>
@@ -152,6 +173,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useTheme } from 'vuetify';
 import { useRoute, RouterLink } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { firstBotAutoRoute } from '@/router/bot-auto-navigation';
 import { useRouter } from 'vue-router';
 import NotificationBell from '@/components/NotificationBell.vue';
 import GlobalSearch from '@/components/GlobalSearch.vue';
@@ -191,9 +213,15 @@ const primaryTabs: NavTab[] = [
   { path: '/automation/bot/triggers', label: 'Bot-Auto',   icon: '🤖', matchPrefix: '/automation/bot' },
   { path: '/analytics',              label: 'Phân tích',   icon: '📈' },
   { path: '/reports',                label: 'Báo cáo',     icon: '📊' },
-  { path: '/group-posts',            label: 'Đăng nhóm',   icon: '📢' },
-  { path: '/chao-hang',              label: 'Chào hàng',   icon: '🛍️' },
 ];
+const allowedPrimaryTabs = computed(() => {
+  const firstBotDestination = firstBotAutoRoute(authStore.hasGrant);
+  return primaryTabs
+    .filter((tab) => tab.matchPrefix !== '/automation/bot' || firstBotDestination)
+    .map((tab) => tab.matchPrefix === '/automation/bot' && firstBotDestination
+      ? { ...tab, path: firstBotDestination }
+      : tab);
+});
 
 function isActive(tab: NavTab): boolean {
   if (tab.matchPrefix === '/$') return route.path === '/';
@@ -223,11 +251,11 @@ const containerW = ref(0);
 const visibleCount = computed(() => {
   const widths = tabWidths.value;
   const avail = containerW.value;
-  if (!widths.length || !avail) return primaryTabs.length; // chưa đo → render đủ
+  if (!widths.length || !avail) return allowedPrimaryTabs.value.length; // chưa đo → render đủ
   const GAP = 2, SAFE = 6, THEM_W = 64; // nút "Thêm" ~64px
   let total = SAFE;
   for (const w of widths) total += w + GAP;
-  if (total <= avail) return primaryTabs.length; // vừa hết, không cần "Thêm"
+  if (total <= avail) return allowedPrimaryTabs.value.length; // vừa hết, không cần "Thêm"
   let used = SAFE + THEM_W;
   let count = 0;
   for (const w of widths) {
@@ -237,8 +265,8 @@ const visibleCount = computed(() => {
   }
   return Math.max(1, count); // luôn chừa ít nhất 1 tab
 });
-const visibleTabs = computed(() => primaryTabs.slice(0, visibleCount.value));
-const overflowTabs = computed(() => primaryTabs.slice(visibleCount.value));
+const visibleTabs = computed(() => allowedPrimaryTabs.value.slice(0, visibleCount.value));
+const overflowTabs = computed(() => allowedPrimaryTabs.value.slice(visibleCount.value));
 
 function measureTabs() {
   const el = navTabsRef.value;
@@ -246,7 +274,9 @@ function measureTabs() {
   const ws: number[] = [];
   el.querySelectorAll('.nav-tab').forEach((n) => ws.push((n as HTMLElement).offsetWidth));
   // Chỉ ghi khi đo được TOÀN BỘ tập tab (lúc chưa cắt) — tránh ghi đè bằng tập đã cắt.
-  if (ws.length >= primaryTabs.length) tabWidths.value = ws.slice(0, primaryTabs.length);
+  if (ws.length >= allowedPrimaryTabs.value.length) {
+    tabWidths.value = ws.slice(0, allowedPrimaryTabs.value.length);
+  }
 }
 // Chiều rộng KHẢ DỤNG cho dải tab = nav-wrap + spacer (bất biến: cắt tab thì nav-wrap
 // co lại, spacer giãn ra → tổng không đổi) → tránh vòng lặp dao động khi cắt/thêm.

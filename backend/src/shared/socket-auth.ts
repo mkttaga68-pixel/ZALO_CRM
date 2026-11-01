@@ -14,6 +14,8 @@
 import type { FastifyInstance } from 'fastify';
 import type { Server, Socket } from 'socket.io';
 import { logger } from './utils/logger.js';
+import { assertActiveSession } from '../modules/auth/active-session.js';
+import { trackUserSocket } from './socket-revocation.js';
 
 export interface SocketIdentity {
   userId: string;
@@ -46,7 +48,7 @@ function extractToken(socket: Socket): string | undefined {
 }
 
 export function registerSocketAuth(io: Server, app: FastifyInstance): void {
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const token = extractToken(socket);
     if (!token) {
       logger.warn(`[socket] từ chối ${socket.id}: thiếu token ở handshake`);
@@ -68,12 +70,25 @@ export function registerSocketAuth(io: Server, app: FastifyInstance): void {
         return next(new Error('UNAUTHORIZED'));
       }
 
+      await assertActiveSession(payload);
       socket.data.identity = {
         userId: payload.id,
         orgId: payload.orgId,
         role: payload.role ?? 'member',
         email: payload.email,
       } satisfies SocketIdentity;
+
+      trackUserSocket(socket, payload.orgId, payload.id);
+      socket.use(async (_packet, packetNext) => {
+        try {
+          const current = app.jwt.verify(token) as typeof payload;
+          await assertActiveSession(current);
+          packetNext();
+        } catch {
+          socket.disconnect(true);
+          packetNext(new Error('UNAUTHORIZED'));
+        }
+      });
 
       return next();
     } catch {

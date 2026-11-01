@@ -14,16 +14,26 @@
         <div class="delay-pill">
           <v-icon size="14">mdi-timer-sand</v-icon>
           <v-text-field
-            :model-value="step.delayMinutes"
+            :model-value="delayValue(step)"
             @update:model-value="updateDelay(idx, $event)"
             variant="plain"
             density="compact"
             type="number"
             min="0"
+            :max="delayMax(step)"
             hide-details
             class="delay-input"
           />
-          <span class="delay-unit">phút</span>
+          <select
+            :value="delayUnitFor(step)"
+            class="delay-unit"
+            aria-label="Đơn vị thời gian chờ"
+            @change="updateDelayUnit(step.stepId, ($event.target as HTMLSelectElement).value as DelayUnit)"
+          >
+            <option v-for="unit in DELAY_UNITS" :key="unit.value" :value="unit.value">
+              {{ unit.label }}
+            </option>
+          </select>
         </div>
       </div>
 
@@ -90,16 +100,28 @@
         <v-card-text>
           <v-text-field v-model="pickerSearch" placeholder="Tìm block theo tên / loại action..." variant="solo-filled" flat density="comfortable" prepend-inner-icon="mdi-magnify" clearable hide-details class="mb-3" />
 
-          <v-text-field
-            v-if="pickerStepIdx !== null"
-            :model-value="steps[pickerStepIdx].delayMinutes"
-            @update:model-value="updateDelay(pickerStepIdx, $event)"
-            type="number" min="0"
-            label="Delay trước bước này (phút)"
-            variant="outlined" density="compact"
-            prepend-inner-icon="mdi-timer-sand"
-            class="mb-3"
-          />
+          <div v-if="pickerStepIdx !== null" class="delay-editor mb-3">
+            <v-text-field
+              :model-value="delayValue(steps[pickerStepIdx])"
+              @update:model-value="updateDelay(pickerStepIdx, $event)"
+              type="number" min="0" :max="delayMax(steps[pickerStepIdx])"
+              label="Thời gian chờ trước bước này"
+              variant="outlined" density="compact"
+              prepend-inner-icon="mdi-timer-sand"
+              hide-details
+            />
+            <v-select
+              :model-value="delayUnitFor(steps[pickerStepIdx])"
+              @update:model-value="updateDelayUnit(steps[pickerStepIdx].stepId, $event as DelayUnit)"
+              :items="DELAY_UNITS"
+              item-title="label"
+              item-value="value"
+              label="Đơn vị"
+              variant="outlined"
+              density="compact"
+              hide-details
+            />
+          </div>
 
           <div v-if="filteredPickerBlocks.length === 0" class="text-center pa-6 text-medium-emphasis">
             <v-icon size="36" color="grey-lighten-1">mdi-puzzle-outline</v-icon>
@@ -145,6 +167,14 @@ const pickerOpen = ref(false);
 const pickerStepIdx = ref<number | null>(null);
 const pickerSearch = ref('');
 
+type DelayUnit = 'minutes' | 'hours' | 'days';
+const DELAY_UNITS: Array<{ label: string; value: DelayUnit; minutes: number }> = [
+  { label: 'phút', value: 'minutes', minutes: 1 },
+  { label: 'giờ', value: 'hours', minutes: 60 },
+  { label: 'ngày', value: 'days', minutes: 1440 },
+];
+const delayUnits = ref<Record<string, DelayUnit>>({});
+
 const blockMap = computed(() => {
   const m = new Map<string, Block>();
   for (const b of props.availableBlocks) m.set(b.id, b);
@@ -185,6 +215,28 @@ const filteredPickerBlocks = computed(() => {
 
 function emitSteps(newSteps: SequenceStep[]) { emit('update:steps', newSteps); }
 
+function inferredDelayUnit(delayMinutes: number): DelayUnit {
+  if (delayMinutes > 0 && delayMinutes % 1440 === 0) return 'days';
+  if (delayMinutes > 0 && delayMinutes % 60 === 0) return 'hours';
+  return 'minutes';
+}
+function delayUnitFor(step: SequenceStep): DelayUnit {
+  return delayUnits.value[step.stepId] ?? inferredDelayUnit(step.delayMinutes);
+}
+function delayMultiplier(unit: DelayUnit): number {
+  return DELAY_UNITS.find((item) => item.value === unit)?.minutes ?? 1;
+}
+function delayValue(step: SequenceStep): number {
+  const value = step.delayMinutes / delayMultiplier(delayUnitFor(step));
+  return Number(value.toFixed(4));
+}
+function delayMax(step: SequenceStep): number {
+  return 86400 / delayMultiplier(delayUnitFor(step));
+}
+function updateDelayUnit(stepId: string, unit: DelayUnit) {
+  delayUnits.value = { ...delayUnits.value, [stepId]: unit };
+}
+
 function addStep() {
   pickerStepIdx.value = null;
   pickerOpen.value = true;
@@ -210,7 +262,11 @@ function pickBlock(blockId: string) {
 }
 function updateDelay(idx: number, value: string | number) {
   const newSteps = [...props.steps];
-  const n = Math.max(0, Number(value) || 0);
+  const unit = delayUnitFor(newSteps[idx]);
+  // Ghi nhớ lựa chọn hiện tại để nhập "60 phút" không tự đổi thành "1 giờ" sau khi render lại.
+  delayUnits.value = { ...delayUnits.value, [newSteps[idx].stepId]: unit };
+  const rawMinutes = Math.round((Number(value) || 0) * delayMultiplier(unit));
+  const n = Math.min(86400, Math.max(0, rawMinutes));
   newSteps[idx] = { ...newSteps[idx], delayMinutes: n };
   emitSteps(newSteps);
 }
@@ -305,7 +361,24 @@ function removeStep(idx: number) {
   height: 20px !important;
   color: var(--at-ink);
 }
-.delay-unit { color: var(--at-muted); }
+.delay-unit {
+  color: var(--at-muted);
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.delay-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 130px;
+  gap: 12px;
+}
+
+@media (max-width: 480px) {
+  .delay-editor { grid-template-columns: 1fr; }
+}
 
 .step-card {
   width: 100%;

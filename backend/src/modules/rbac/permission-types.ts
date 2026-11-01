@@ -17,7 +17,7 @@ export const ACTIONS = [
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
-// 15 resources trong ZaloCRM (map từ Getfly + thêm cụ thể cho Zalo domain)
+// 17 resources trong ZaloCRM (map từ Getfly + thêm cụ thể cho Zalo domain)
 export const RESOURCES = [
   'department',         // Quản lý phòng ban
   'user',               // Quản lý người dùng
@@ -25,6 +25,8 @@ export const RESOURCES = [
   'conversation',       // Hội thoại
   'contact',            // Khách hàng
   'friend',             // Friends (Zalo per-account)
+  'posting',            // Đăng bài: Đăng nhóm + Chào hàng
+  'bot_auto',           // Bot-Auto — công tắc tổng của cả module automation (tab 🤖)
   'customer_list',      // Tệp KH
   'broadcast',          // Chiến dịch
   'sequence',           // Sequence automation
@@ -47,6 +49,9 @@ export const RESOURCE_ACTIONS: Record<Resource, readonly Action[]> = {
   conversation: ['access', 'edit', 'delete', 'view_all'],
   contact: ['access', 'create', 'edit', 'delete', 'view_all'],
   friend: ['access', 'create', 'edit', 'delete', 'view_all'],
+  posting: ['access'],
+  // Bot-Auto là công tắc module, không phải entity → chỉ có 'access'.
+  bot_auto: ['access'],
   customer_list: ['access', 'create', 'edit', 'delete', 'approve', 'view_all'],
   broadcast: ['access', 'create', 'edit', 'delete', 'approve', 'view_all'],
   sequence: ['access', 'create', 'edit', 'delete', 'approve', 'view_all'],
@@ -69,12 +74,45 @@ export type GrantsJson = {
   };
 };
 
+// ════════════════════════════════════════════════════════════════════════
+// MODULE GATE — Bot-Auto (2026-10-26)
+//
+// Tab 🤖 Bot-Auto gom 5 resource con. Trước đây mỗi resource tick riêng, không có
+// cách nào tắt cả module trong 1 nốt nhạc. Thêm resource 'bot_auto' làm CÔNG TẮC
+// TỔNG: bỏ tick 'bot_auto.access' → mọi quyền trên 5 resource con tắt theo,
+// không cần đụng vào từng ô.
+//
+// Quan hệ là AND: user cần bot_auto.access VÀ grant của resource con.
+// Enforce trong hasGrant() nên mọi đường (middleware requireGrant, userHasGrant,
+// route guard) đều đi qua cùng 1 luật — không có cửa sau.
+// ════════════════════════════════════════════════════════════════════════
+
+/** Resource con nằm trong module nào. Resource không có mặt ở đây = không bị gate. */
+export const RESOURCE_MODULE: Partial<Record<Resource, Resource>> = {
+  customer_list: 'bot_auto',
+  broadcast: 'bot_auto',
+  sequence: 'bot_auto',
+  trigger: 'bot_auto',
+  block: 'bot_auto',
+};
+
+/** 5 resource con của Bot-Auto (dùng cho test + backfill, không mang ý nghĩa thứ tự). */
+export const BOT_AUTO_RESOURCES = (Object.keys(RESOURCE_MODULE) as Resource[]).filter(
+  (r) => RESOURCE_MODULE[r] === 'bot_auto',
+);
+
 /**
  * Check 1 action có grant không.
  * Default deny (return false nếu thiếu).
+ *
+ * Resource thuộc 1 module (xem RESOURCE_MODULE) còn phải có module.access — tắt
+ * module là tắt sạch, kể cả các ô con vẫn đang tick.
  */
 export function hasGrant(grants: GrantsJson, resource: Resource, action: Action): boolean {
-  return grants?.[resource]?.[action] === true;
+  if (grants?.[resource]?.[action] !== true) return false;
+  const moduleResource = RESOURCE_MODULE[resource];
+  if (moduleResource && grants?.[moduleResource]?.access !== true) return false;
+  return true;
 }
 
 /**
@@ -143,6 +181,7 @@ export const DEFAULT_PERMISSION_GROUPS = [
       conversation: viewAll('conversation'),
       contact: viewAll('contact'),
       friend: viewAll('friend'),
+      bot_auto: { access: true },
       customer_list: { access: true, view_all: true, create: true, edit: true, approve: true },
       broadcast: { access: true, view_all: true, create: true, edit: true, approve: true },
       sequence: { access: true, view_all: true, create: true, edit: true, approve: true },
@@ -164,6 +203,7 @@ export const DEFAULT_PERMISSION_GROUPS = [
       conversation: { access: true, edit: true, delete: true, view_all: true }, // view_all trong scope dept
       contact: fullCrud('contact'),
       friend: fullCrud('friend'),
+      bot_auto: { access: true },
       customer_list: { access: true, create: true, edit: true, delete: true, approve: true, view_all: true },
       broadcast: { access: true, create: true, edit: true, delete: true, approve: true, view_all: true },
       sequence: { access: true, create: true, edit: true, approve: true, view_all: true },
@@ -183,6 +223,7 @@ export const DEFAULT_PERMISSION_GROUPS = [
       conversation: { access: true, edit: true, delete: true },
       contact: { access: true, create: true, edit: true, delete: true },
       friend: { access: true, create: true, edit: true },
+      bot_auto: { access: true },
       customer_list: { access: true, create: true, edit: true },
       broadcast: { access: true, create: true, edit: true },
       sequence: { access: true, create: true, edit: true },
@@ -201,6 +242,7 @@ export const DEFAULT_PERMISSION_GROUPS = [
       conversation: { access: true, edit: true },
       contact: { access: true, create: true, edit: true },
       friend: { access: true, create: true, edit: true },
+      bot_auto: { access: true },
       customer_list: { access: true },
       broadcast: { access: true },
       sequence: { access: true },
@@ -217,6 +259,7 @@ export const DEFAULT_PERMISSION_GROUPS = [
       // Marketing CRUD Broadcast/Sequence/Trigger/Block, view_all Contact (anh chốt A 2026-05-21 13:25)
       contact: { access: true, view_all: true },
       friend: { access: true, view_all: true },
+      bot_auto: { access: true },
       customer_list: { access: true, create: true, edit: true, view_all: true },
       broadcast: { access: true, create: true, edit: true, delete: true, view_all: true },
       sequence: { access: true, create: true, edit: true, delete: true, view_all: true },

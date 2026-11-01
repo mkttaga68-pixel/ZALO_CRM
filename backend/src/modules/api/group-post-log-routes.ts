@@ -5,10 +5,12 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
+import { requireGrant } from '../rbac/rbac-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 
 export async function groupPostLogRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
+  app.addHook('preHandler', requireGrant('posting', 'access'));
 
   // GET /api/v1/group-post-logs?accountId&status&page&limit
   app.get('/api/v1/group-post-logs', async (request: FastifyRequest, reply: FastifyReply) => {

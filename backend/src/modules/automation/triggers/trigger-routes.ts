@@ -17,7 +17,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../../../shared/database/prisma-client.js';
 import { authMiddleware } from '../../auth/auth-middleware.js';
-import { requireRole } from '../../auth/role-middleware.js';
+import { requireGrant } from '../../rbac/rbac-middleware.js';
 import { logger } from '../../../shared/utils/logger.js';
 import {
   isSupportedEventType,
@@ -37,12 +37,12 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
 
   // Catalog endpoint — static metadata for UI cards (no DB hit)
-  app.get(`${BASE}/catalog`, async () => {
+  app.get(`${BASE}/catalog`, { preHandler: requireGrant('trigger', 'access') }, async () => {
     return { catalog: TRIGGER_CATALOG };
   });
 
   // List configured triggers
-  app.get(BASE, async (request: FastifyRequest) => {
+  app.get(BASE, { preHandler: requireGrant('trigger', 'access') }, async (request: FastifyRequest) => {
     const user = request.user!;
     const q = request.query as Record<string, string | undefined>;
 
@@ -66,7 +66,7 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Get one trigger
-  app.get(`${BASE}/:id`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get(`${BASE}/:id`, { preHandler: requireGrant('trigger', 'access') }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
     const trigger = await prisma.automationTrigger.findFirst({
@@ -81,7 +81,7 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Create trigger
-  app.post(BASE, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(BASE, { preHandler: requireGrant('trigger', 'create') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const body = request.body as Record<string, any>;
@@ -164,7 +164,7 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Update trigger
-  app.put(`${BASE}/:id`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.put(`${BASE}/:id`, { preHandler: requireGrant('trigger', 'edit') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
@@ -239,17 +239,17 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post(`${BASE}/:id/enable`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(`${BASE}/:id/enable`, { preHandler: requireGrant('trigger', 'edit') }, async (request: FastifyRequest, reply: FastifyReply) => {
     return toggleEnabled(request, reply, true);
   });
-  app.post(`${BASE}/:id/disable`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(`${BASE}/:id/disable`, { preHandler: requireGrant('trigger', 'edit') }, async (request: FastifyRequest, reply: FastifyReply) => {
     return toggleEnabled(request, reply, false);
   });
 
   // Manual run — emits an AutomationEvent of the trigger's eventType.
   // Engine materializer picks it up, creates Campaign + Tasks for resolved contacts.
   // Body: optional { contactId, segmentHint, payload } to override trigger.segmentSpec.
-  app.post(`${BASE}/:id/run`, { preHandler: requireRole('owner', 'admin') }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(`${BASE}/:id/run`, { preHandler: requireGrant('trigger', 'edit') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
@@ -285,7 +285,7 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Hard delete — disallow if active campaigns exist (state machine integrity)
-  app.delete(`${BASE}/:id`, { preHandler: requireRole('owner', 'admin') }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.delete(`${BASE}/:id`, { preHandler: requireGrant('trigger', 'delete') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };

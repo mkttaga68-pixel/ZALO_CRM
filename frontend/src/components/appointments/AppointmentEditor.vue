@@ -971,7 +971,7 @@ async function submit() {
       notes: form.notes.trim() || null,
     };
     if (isEdit.value && props.appointment) {
-      const res = await api.patch(`/appointments/${props.appointment.id}`, payload);
+      const res = await api.put(`/appointments/${props.appointment.id}`, payload);
       emit('updated', res.data);
     } else {
       const res = await api.post('/appointments', payload);

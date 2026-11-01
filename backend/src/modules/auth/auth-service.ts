@@ -122,6 +122,7 @@ export async function getProfile(userId: string) {
       isActive: true,
       createdAt: true,
       org: { select: { id: true, name: true, timezone: true } },
+      permissionGroup: { select: { grants: true, archivedAt: true } },
     },
   });
 
@@ -131,5 +132,10 @@ export async function getProfile(userId: string) {
     throw err;
   }
 
-  return user;
+  const { permissionGroup, ...profile } = user;
+  return {
+    ...profile,
+    // UI visibility only; API routes remain authoritative for authorization.
+    grants: permissionGroup && !permissionGroup.archivedAt ? permissionGroup.grants : {},
+  };
 }

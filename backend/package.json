@@ -10,6 +10,8 @@
     "start": "node dist/app.js",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
+    "db:posting:check": "node ../scripts/manual-posting-migrate.cjs --check",
+    "db:posting:apply": "node ../scripts/manual-posting-migrate.cjs --apply",
     "db:seed": "tsx prisma/seed.ts",
     "ensure-admin": "tsx src/modules/auth/ensure-admin.ts",
     "db:studio": "prisma studio",

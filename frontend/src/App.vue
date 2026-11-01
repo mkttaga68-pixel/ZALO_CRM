@@ -1,5 +1,6 @@
 <template>
   <component :is="layout">
+    <div v-if="auth.profileError" role="alert" class="session-error">{{ auth.profileError }}</div>
     <router-view />
   </component>
 </template>
@@ -35,3 +36,7 @@ watch(
   { immediate: true },
 );
 </script>
+
+<style scoped>
+.session-error { margin: 12px; padding: 12px 16px; border: 1px solid #e4bb63; border-radius: 8px; background: #fff8e8; color: #714b00; }
+</style>

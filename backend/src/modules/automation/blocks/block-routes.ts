@@ -12,7 +12,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../../../shared/database/prisma-client.js';
 import { authMiddleware } from '../../auth/auth-middleware.js';
-import { requireRole } from '../../auth/role-middleware.js';
+import { requireGrant } from '../../rbac/rbac-middleware.js';
 import { logger } from '../../../shared/utils/logger.js';
 import {
   isSupportedActionType,
@@ -26,7 +26,7 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
 
   // List blocks — supports filter by channel, actionType, folderId, archived.
-  app.get(BASE, async (request: FastifyRequest) => {
+  app.get(BASE, { preHandler: requireGrant('block', 'access') }, async (request: FastifyRequest) => {
     const user = request.user!;
     const q = request.query as Record<string, string | undefined>;
 
@@ -50,7 +50,7 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Get one block (full content)
-  app.get(`${BASE}/:id`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get(`${BASE}/:id`, { preHandler: requireGrant('block', 'access') }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
     const block = await prisma.block.findFirst({
@@ -65,7 +65,7 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Create block
-  app.post(BASE, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(BASE, { preHandler: requireGrant('block', 'create') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const body = request.body as Record<string, any>;
@@ -123,7 +123,7 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
 
   // Update block — content edits create a NEW snapshot reference at task-enroll
   // time, so running tasks keep their frozen content (anh chốt Q1 snapshot rule).
-  app.put(`${BASE}/:id`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.put(`${BASE}/:id`, { preHandler: requireGrant('block', 'edit') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
@@ -131,7 +131,7 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
 
       const existing = await prisma.block.findFirst({
         where: { id, orgId: user.orgId },
-        select: { id: true, actionType: true, archivedAt: true },
+        select: { id: true, actionType: true, content: true, archivedAt: true },
       });
       if (!existing) return reply.status(404).send({ error: 'block not found' });
       if (existing.archivedAt) {
@@ -143,9 +143,20 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
       if (body.actionType !== undefined && !isSupportedActionType(body.actionType)) {
         return reply.status(400).send({ error: `actionType '${body.actionType}' not supported` });
       }
-      if (body.content !== undefined) {
-        const v = validateBlockContent(effectiveActionType, body.content);
+      if (body.content !== undefined || body.actionType !== undefined) {
+        const v = validateBlockContent(effectiveActionType, body.content !== undefined ? body.content : existing.content);
         if (!v.ok) return reply.status(400).send({ error: 'content invalid', detail: v.error });
+      }
+
+      for (const field of ['folderId', 'ownerNickId'] as const) {
+        const value = body[field];
+        if (value === undefined || value === null) continue;
+        if (typeof value !== 'string' || !value.trim()) return reply.status(400).send({ error: 'invalid reference' });
+        const where = { id: value, orgId: user.orgId };
+        const related = field === 'folderId'
+          ? await prisma.blockFolder.findFirst({ where, select: { id: true } })
+          : await prisma.zaloAccount.findFirst({ where, select: { id: true } });
+        if (!related) return reply.status(400).send({ error: 'reference not found' });
       }
 
       const block = await prisma.block.update({
@@ -169,7 +180,7 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
 
   // Archive (soft delete) — running tasks unaffected because they hold their
   // own blockSnapshot. New enrollments cannot pick this block.
-  app.post(`${BASE}/:id/archive`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(`${BASE}/:id/archive`, { preHandler: requireGrant('block', 'delete') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
@@ -191,7 +202,7 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Unarchive
-  app.post(`${BASE}/:id/unarchive`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(`${BASE}/:id/unarchive`, { preHandler: requireGrant('block', 'edit') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
@@ -214,7 +225,7 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
 
   // Hard delete — only allowed if zero references (sequences/broadcasts/triggers/tasks).
   // Otherwise force user to archive instead.
-  app.delete(`${BASE}/:id`, { preHandler: requireRole('owner', 'admin') }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.delete(`${BASE}/:id`, { preHandler: requireGrant('block', 'delete') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
@@ -253,7 +264,7 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Duplicate block (clones content, appends "(copy)" to name)
-  app.post(`${BASE}/:id/duplicate`, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post(`${BASE}/:id/duplicate`, { preHandler: requireGrant('block', 'create') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };

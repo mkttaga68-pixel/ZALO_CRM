@@ -9,12 +9,12 @@
  *   - "this network" (0.0.0.0/8)
  *   - ULA + IPv6 link-local (fc00::/7, fe80::/10)
  *
- * KNOWN LIMITATION (TOCTOU): we validate the hostname literal but do NOT
- * resolve it to an IP. A hostname like `evil.example.com` that resolves to
- * 169.254.169.254 will pass this check. Fix later by passing all requests
- * through an egress proxy that re-checks the resolved IP, OR by performing
- * a DNS lookup here and rejecting matches.
+ * This synchronous helper checks syntax and IP literals only. Network callers
+ * must use safeOutboundFetch, which validates DNS answers and pins the socket
+ * to a checked address while preserving TLS hostname verification.
  */
+
+import { isIP } from 'node:net';
 
 const BLOCKED_HOST_PATTERNS: RegExp[] = [
   /^localhost$/i,
@@ -31,6 +31,25 @@ const BLOCKED_HOST_PATTERNS: RegExp[] = [
   /^\[?fd[0-9a-f]{2}:/i,
   /^\[?fe80:/i,
 ];
+
+/** Conservative public IP policy. Deny mapped/transition IPv6 entirely. */
+export function isPublicAddress(address: string): boolean {
+  const host = address.replace(/^\[|\]$/g, '').toLowerCase();
+  if (isIP(host) === 4) {
+    const [a, b] = host.split('.').map(Number);
+    return !(a === 0 || a === 10 || a === 127 || a >= 224 ||
+      a === 169 && b === 254 || a === 172 && b! >= 16 && b! <= 31 ||
+      a === 192 && (b === 168 || b === 0) || a === 100 && b! >= 64 && b! <= 127 ||
+      a === 198 && (b === 18 || b === 19));
+  }
+  if (isIP(host) === 6) {
+    const first = parseInt(host.split(':')[0] || '0', 16);
+    if ((first & 0xe000) !== 0x2000 || first === 0x2002) return false;
+    if (first === 0x2001 && parseInt(host.split(':')[1] || '0', 16) < 0x200) return false;
+    return true;
+  }
+  return false;
+}
 
 export class SsrfBlockedError extends Error {
   constructor(message: string, public readonly url: string) {
@@ -55,13 +74,13 @@ export function assertSafeOutboundUrl(raw: string): URL {
     throw new SsrfBlockedError('Invalid URL', raw);
   }
 
-  if (parsed.protocol !== 'https:') {
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
     throw new SsrfBlockedError(`Only HTTPS is allowed (got ${parsed.protocol})`, raw);
   }
 
   // Normalise hostname: strip brackets from IPv6 form, lowercase.
-  const host = parsed.hostname.toLowerCase();
-  if (!host) {
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.$/, '');
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || isIP(host) !== 0 && !isPublicAddress(host)) {
     throw new SsrfBlockedError('Empty hostname', raw);
   }
 

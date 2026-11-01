@@ -10,6 +10,7 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { assertSafeOutboundUrl, SsrfBlockedError } from '../../shared/utils/ssrf-guard.js';
 import crypto from 'node:crypto';
+import { safeOutboundFetch } from '../../shared/utils/safe-outbound-fetch.js';
 
 export async function emitWebhook(orgId: string, event: string, data: any): Promise<void> {
   try {
@@ -40,7 +41,7 @@ export async function emitWebhook(orgId: string, event: string, data: any): Prom
       : '';
 
     // Fire and forget — never block the caller
-    fetch(safeUrl.toString(), {
+    safeOutboundFetch(safeUrl.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -49,7 +50,7 @@ export async function emitWebhook(orgId: string, event: string, data: any): Prom
       },
       body: payload,
       signal: AbortSignal.timeout(10000),
-    }).catch((err) => logger.warn(`[webhook] Failed to deliver ${event}:`, err));
+    }).catch(() => logger.warn(`[webhook] Failed to deliver ${event}`));
   } catch (err) {
     logger.error('[webhook] Error emitting webhook:', err);
   }

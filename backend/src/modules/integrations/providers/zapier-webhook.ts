@@ -6,6 +6,7 @@
 import { prisma } from '../../../shared/database/prisma-client.js';
 import { logger } from '../../../shared/utils/logger.js';
 import { assertSafeOutboundUrl, SsrfBlockedError } from '../../../shared/utils/ssrf-guard.js';
+import { safeOutboundFetch } from '../../../shared/utils/safe-outbound-fetch.js';
 
 interface ZapierConfig {
   webhookUrl?: string;
@@ -57,7 +58,7 @@ export async function triggerZapierWebhook(
       })),
     };
 
-    const response = await fetch(webhookUrl, {
+    const response = await safeOutboundFetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -65,9 +66,8 @@ export async function triggerZapierWebhook(
     });
 
     if (!response.ok) {
-      const body = await response.text();
-      logger.error('[zapier-webhook] Error:', body);
-      return { direction: 'export', recordCount: 0, status: 'failed', errorMessage: `Zapier ${response.status}: ${body.slice(0, 200)}` };
+      logger.error(`[zapier-webhook] HTTP ${response.status}`);
+      return { direction: 'export', recordCount: 0, status: 'failed', errorMessage: `Zapier HTTP ${response.status}` };
     }
 
     logger.info(`[zapier-webhook] Sent ${contacts.length} contacts to Zapier`);

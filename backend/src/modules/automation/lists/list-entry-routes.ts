@@ -12,6 +12,7 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../../../shared/database/prisma-client.js';
 import { authMiddleware } from '../../auth/auth-middleware.js';
+import { requireGrant } from '../../rbac/rbac-middleware.js';
 import { logger } from '../../../shared/utils/logger.js';
 import { revalidatePhone, parseAndDedup } from './list-import-service.js';
 import { kickoffEnrichment } from './list-enrichment-service.js';
@@ -36,6 +37,17 @@ type EntryStatusTab =
 
 export async function customerListEntryRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
+  app.addHook('preHandler', async (request, reply) => {
+    const path = request.url.split('?')[0].replace(/\/$/, '');
+    const action = request.method === 'GET'
+      ? 'access'
+      : request.method === 'DELETE'
+        ? 'delete'
+        : request.method === 'POST' && path.endsWith('/entries')
+          ? 'create'
+          : 'edit';
+    return requireGrant('customer_list', action)(request, reply);
+  });
 
   // ─── GET /customer-lists/:id/entries ───
   app.get<{

@@ -1,0 +1,46 @@
+// Native CRM publishing. Separate from external BOT jobs and AI-QC evidence.
+model ManualPostingJob {
+  id             String    @id @default(uuid())
+  orgId          String    @map("org_id")
+  createdById    String    @map("created_by_id")
+  zaloAccountId  String    @map("zalo_account_id")
+  requestId      String    @map("request_id")
+  fingerprint    String
+  kind           String
+  body           String    @db.Text
+  imageUrls      Json      @default("[]") @map("image_urls")
+  delaySeconds   Int       @default(10) @map("delay_seconds")
+  status         String    @default("QUEUED")
+  workerId       String?   @map("worker_id")
+  leaseUntil     DateTime? @map("lease_until") @db.Timestamptz(3)
+  lastError      String?   @map("last_error")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+  recipients     ManualPostingRecipient[]
+
+  @@unique([orgId, id])
+  @@unique([orgId, createdById, requestId])
+  @@index([orgId, createdAt(sort: Desc)])
+  @@index([status, createdAt])
+  @@index([zaloAccountId, status])
+  @@map("manual_posting_jobs")
+}
+
+model ManualPostingRecipient {
+  id           String    @id @default(uuid())
+  orgId        String    @map("org_id")
+  jobId        String    @map("job_id")
+  targetRef    String    @map("target_ref")
+  threadId     String    @map("thread_id")
+  displayName  String    @map("display_name")
+  ordinal      Int
+  status       String    @default("QUEUED")
+  error        String?
+  startedAt    DateTime? @map("started_at") @db.Timestamptz(3)
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz(3)
+  job          ManualPostingJob @relation(fields: [orgId, jobId], references: [orgId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([orgId, jobId, threadId])
+  @@index([orgId, jobId, ordinal])
+  @@map("manual_posting_recipients")
+}
