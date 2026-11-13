@@ -1,8 +1,10 @@
 # Local manual scan controls. Keep this overlay last; never use for production rollout.
 services:
   app:
-    # Real vault excludes test samples. Rollback: zl-crm-app:aiqc-job-recovery-20261113
-    image: zl-crm-app:aiqc-real-source-20261113
+    # Nightly customer message archive (22:00) + Kho quy tắc sync report/prune/source-missing guard. AI nightly learning stays OFF (no overlay).
+    # Requires migration 20261113200000_ai_qc_customer_message_archive (scripts/aiqc-customer-archive-migrate.cjs --apply).
+    # Rollback: zl-crm-app:aiqc-learning-archive-20261113 (backup: C:\Zalo CRM\aiqc-learning-backups\aiqc-learning-backup-20261113-151456)
+    image: zl-crm-app:aiqc-archive-nightly-20261113
     pull_policy: never
     build: !reset null
     environment:
@@ -11,3 +13,7 @@ services:
       AI_QC_AUTO_MONITOR_ENABLED: "false"
       # Quét liên tục + cảnh báo realtime. Cần migration 20261111170000_ai_qc_continuous_local (đã áp 11/11).
       AI_QC_CONTINUOUS_LOCAL_ENABLED: "true"
+      # "Lưu trữ tin nhắn": tự lưu tin nhắn 1-1 của khách mỗi đêm (không dùng AI). Tắt: đặt "false".
+      AI_QC_CUSTOMER_ARCHIVE_ENABLED: "true"
+      AI_QC_CUSTOMER_ARCHIVE_SCHEDULE: "22:00"
+      AI_QC_CUSTOMER_ARCHIVE_TZ: Asia/Ho_Chi_Minh

@@ -2,7 +2,7 @@ import { api } from './index';
 
 // Types are intentionally limited to the public QC contract, no backend runtime imports.
 export interface QcCitation {documentId:string;revision:number;contentHash:string;byteStart:number;byteEnd:number;quote:string}
-export interface QcDocument {id:string;documentId:string;sourcePath:string;revision:number;contentHash:string;markdown:string;status:string;approvedAt?:string|null;revokedAt?:string|null;departmentIds:string[];effectiveFrom:string|null;effectiveTo:string|null;knowledgeClass?:'POLICY_RULE'|'VERIFIED_LEARNING_CASE';learningDraftId?:string;rule?:{id:string;type:string;matchTerms:string[];conflictGroup:string|null;slaSeconds:number|null;careIntervalDays:number|null}|null}
+export interface QcDocument {id:string;documentId:string;sourcePath:string;revision:number;contentHash:string;markdown:string;status:string;approvedAt?:string|null;revokedAt?:string|null;departmentIds:string[];effectiveFrom:string|null;effectiveTo:string|null;knowledgeClass?:'POLICY_RULE'|'VERIFIED_LEARNING_CASE';learningDraftId?:string;sourceMissingAt?:string|null;rule?:{id:string;type:string;matchTerms:string[];conflictGroup:string|null;slaSeconds:number|null;careIntervalDays:number|null}|null}
 export interface QcFinding {type:string;status:string;messageIds:string[];citations:QcCitation[];explanation:string;missingContext:string[]}
 export interface QcRun {id:string;createdAt:string;status:string;missingContext:string[];provider:string;reviewStatus:string;reviewVersion:number;snapshotHash:string;authorityEpoch:number;indexVersion:number;
   conversation:{id:string;source:string;messages:Array<{id:string;text:string;role:string;actorId:string|null;attribution:string;occurredAt:string}>};
@@ -13,12 +13,13 @@ export interface QcWorkspace {authorityEpoch:number;indexVersion:number;permissi
 export interface QcStatus {storageMode:string;syntheticOnly:boolean;manualRealTest?:boolean;manualProvider?:'openai'|'ollama';availability:Record<string,string>;provider:{ollamaAvailable?:boolean;openAiRemoved?:boolean;apiKeyConfigured:boolean;models:string[];realApiEnabled:boolean;outboundTestApproved:boolean};scenarios:string[]}
 export const qcRequest=async<T>(method:'get'|'post'|'put'|'delete',path:string,data?:unknown):Promise<T> => (await api.request<T>({method,url:'/ai-quality-control'+path,...(method==='get'?{params:data}:{data})})).data;
 
-// "Lưu trữ tin nhắn": khách đã lưu (chỉ tham chiếu) + tin nhắn/ thống kê đọc trực tiếp từ CRM.
-export interface ArchiveCustomer {contactId:string;name:string;lastMessageAt:string|null;saved:boolean}
-export interface ArchiveItem {contactId:string;name:string;savedAt:string;lastOpenedAt:string;openCount:number;savedByMe:boolean;customerMessages:number;ourMessages:number;lastActivity:string|null}
+// "Lưu trữ tin nhắn": hệ thống tự lưu tin nhắn 1-1 mỗi đêm; admin tìm theo tên/SĐT để xem lại.
+export interface ArchiveCustomer {contactId:string;name:string;phone:string|null;customerMessages:number;ourMessages:number;lastMessageAt:string|null}
+export interface ArchiveRun {status:'RUNNING'|'DONE'|'FAILED';trigger:'SCHEDULE'|'MANUAL';startedAt:string;finishedAt:string|null;savedUntil:string;messages:number;customers:number;errorCode:string|null}
+export interface ArchiveStatus {enabled:boolean;schedule:{hour:number;minute:number;timeZone:string}|null;blockers:string[];lastRun:ArchiveRun|null;lastSuccess:ArchiveRun|null;totals:{messages:number;customers:number}|null;canRunNow:boolean}
 export interface ArchiveMessage {id:string;at:string;from:'CUSTOMER'|'US';via:string;type:string;text:string;sender:string|null;account:string|null}
 export interface ArchiveStats {total:number;customer:number;ours:number;automation:number;firstAt:string|null;lastAt:string|null;firstCustomerAt:string|null;lastCustomerAt:string|null;activeDays:number;byType:Record<string,number>;byHour:number[];byWeekday:number[];byMonth:Array<{month:string;customer:number;ours:number}>;byAccount:Array<{account:string;customer:number;ours:number}>;reply:{count:number;unanswered:number;medianSeconds:number|null;within5Minutes:number};truncated:boolean}
-export interface ArchiveDetail {customer:{contactId:string;name:string;firstContactDate:string|null;conversations:number};archive:{savedAt:string;lastOpenedAt:string;openCount:number}|null;stats:ArchiveStats;messages:ArchiveMessage[];hasMore:boolean}
+export interface ArchiveDetail {customer:{contactId:string;name:string;phone:string|null;firstContactDate:string|null;conversations:number};archive:{lastArchivedAt:string|null};stats:ArchiveStats;messages:ArchiveMessage[];hasMore:boolean}
 
 // AIQC Nightly Learning — Learning Drafts shown inside "Kho quy tắc".
 export type LearningDraftStatus='DRAFT'|'CHANGES_REQUESTED'|'APPROVED'|'REJECTED'|'EXPIRED';

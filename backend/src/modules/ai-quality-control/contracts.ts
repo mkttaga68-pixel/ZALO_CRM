@@ -50,6 +50,8 @@ export interface KnowledgeVersion {
     /** Absent = POLICY_RULE (official rule synced from Obsidian). VERIFIED_LEARNING_CASE = approved Learning Draft, reference only. */
     knowledgeClass?: 'POLICY_RULE' | 'VERIFIED_LEARNING_CASE';
     learningDraftId?: string;
+    /** Set by the Obsidian sync when the source file is no longer in the vault; cleared when it reappears. Drafts cannot be published while set. */
+    sourceMissingAt?: string | null;
 }
 export interface Citation {
     documentId: string;
@@ -254,8 +256,6 @@ export interface Workspace {
     learningJobs?: import('./learning-drafts.js').LearningJob[];
     /** Content-free tombstones (lesson-key digest + expiry) that keep a rejected lesson suppressed after its draft is purged. */
     learningSuppressions?: import('./learning-drafts.js').LearningSuppression[];
-    /** Customers saved in "Lưu trữ tin nhắn" — references only (no message content; messages stay in the CRM tables). */
-    customerArchive?: import('./customer-archive.js').CustomerArchiveEntry[];
 }
 export function initialWorkspace(): Workspace {
     return {

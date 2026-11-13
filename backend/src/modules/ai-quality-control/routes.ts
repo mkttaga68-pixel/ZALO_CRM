@@ -75,7 +75,7 @@ export function aiQualityControlRoutes(deps: NativeQcDependencies): FastifyPlugi
             throw new QcError('AI_QC_REAL_DATA_DISABLED', 403); if (actor.orgId !== deps.environment.realDataOrgId)
             throw new QcError('AI_QC_REAL_DATA_TENANT_NOT_APPROVED', 403); return deps.crm.load(actor, id, request); };
         await registerLearningDraftRoutes(app, { repo: deps.repo, actor: deps.actor, validateDepartments: deps.validateDepartments, enabled: () => deps.environment.enabled, unavailableReason: deps.unavailableReason, syntheticOnly: !deps.environment.realData, notifier: deps.learningNotifier, outbox: deps.learningOutbox, storageMode: deps.storageMode, realDataOrgId: deps.environment.realDataOrgId });
-        await registerCustomerArchiveRoutes(app, { repo: deps.repo, actor: deps.actor, enabled: () => deps.environment.enabled, unavailableReason: deps.unavailableReason,
+        await registerCustomerArchiveRoutes(app, { actor: deps.actor, enabled: () => deps.environment.enabled, unavailableReason: deps.unavailableReason,
             realData: () => deps.environment.realData, realDataOrgId: deps.environment.realDataOrgId, authorize: deps.crm?.authorize });
         await registerDepartmentObservations(app,{repo:deps.repo,actor:deps.actor,enabled:()=>deps.environment.enabled&&!deps.unavailableReason,authorizeConversation:(actor,id,request)=>realAccess(actor,request,id)});
         await registerDepartmentJobRoutes(app,{repo:deps.repo,actor:deps.actor,enabled:()=>deps.environment.enabled&&!deps.unavailableReason&&process.env.AI_QC_CONTINUOUS_LOCAL_ENABLED==='true',authorizeConversation:(actor,id,request)=>realAccess(actor,request,id)});
@@ -175,6 +175,10 @@ export function aiQualityControlRoutes(deps: NativeQcDependencies): FastifyPlugi
             if (!Array.isArray(b.departmentIds) || b.departmentIds.some(v => typeof v !== 'string'))
                 throw new QcError('INVALID_DOCUMENT_ACL');
             await deps.validateDepartments(actor, b.departmentIds as string[]);
+            // The Obsidian file must still exist with the synced bytes; a deleted or edited source cannot be approved.
+            const s = await deps.repo.read(actor.orgId), doc = s.documents.find(d => d.id === param(request) && d.orgId === actor.orgId);
+            if (doc && doc.status === 'DRAFT' && doc.knowledgeClass !== 'VERIFIED_LEARNING_CASE')
+                await deps.vault.verifySource(actor, doc.synthetic ? deps.syntheticVault : (s.settings.vaultPath || deps.defaultVault?.(actor.orgId) || deps.syntheticVault), doc);
             return approval.publish(actor, param(request), { hash: String(b.hash ?? ''), effectiveFrom: String(b.effectiveFrom ?? ''), effectiveTo: b.effectiveTo === null ? null : String(b.effectiveTo ?? ''), departmentIds: b.departmentIds as string[], rule: b.rule as Rule });
         }));
         app.post(prefix + '/knowledge/:id/revoke', run('approve', async (actor, request) => approval.revoke(actor, param(request), String(body(request).hash ?? ''))));

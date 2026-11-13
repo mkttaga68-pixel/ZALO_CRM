@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs, constants } from 'node:fs';
 import path from 'node:path';
 import { ANALYSIS_TYPES, canReadDocument, demand, iso, QcError, type Actor, type Audit, type Citation, type KnowledgeChunk, type KnowledgeVersion, type Rule, type Workspace, type WorkspaceRepository } from './contracts.js';
+import { WORKSPACE_LIMITS } from './repository.js';
 export const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 export function audit(state: Workspace, actor: Actor, action: string, resourceId: string, details: Record<string, unknown> = {}) {
     state.audits.push({ id: randomUUID(), orgId: actor.orgId, actorId: actor.id, action, resourceId, at: new Date().toISOString(), details } satisfies Audit);
@@ -18,9 +19,12 @@ const keyPath = (value: string) => process.platform === 'win32' ? value.toLowerC
 const within = (root: string, child: string) => { const relative = path.relative(root, child); return relative !== '' && !relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative); };
 export class ObsidianKnowledgeService {
     constructor(private roots: (orgId: string) => string[], private syntheticRoot: string) { }
-    async validateVaultPath(actor: Actor, root: string) {
-        demand(actor, 'edit');
-        demand(actor, 'view_all');
+    /** `internal` = server-chosen root re-read during publication: skips the edit/view_all gate (path choice), keeps the tenant allowlist and boundary checks. */
+    async validateVaultPath(actor: Actor, root: string, internal = false) {
+        if (!internal) {
+            demand(actor, 'edit');
+            demand(actor, 'view_all');
+        }
         if (typeof root !== 'string' || !path.isAbsolute(root))
             throw new QcError('VAULT_PATH_MUST_BE_ABSOLUTE');
         const resolved = path.resolve(root);
@@ -37,8 +41,8 @@ export class ObsidianKnowledgeService {
             throw new QcError('VAULT_NOT_ALLOWED_FOR_TENANT', 403);
         return real;
     }
-    async scan(actor: Actor, root: string) {
-        const real = await this.validateVaultPath(actor, root);
+    async scan(actor: Actor, root: string, internal = false) {
+        const real = await this.validateVaultPath(actor, root, internal);
         const docs: ScannedDocument[] = [];
         const issues: Array<{
             path: string;
@@ -102,22 +106,67 @@ export class ObsidianKnowledgeService {
         await walk(real, 0);
         return { documents: docs, issues, coverage: issues.length ? 'PARTIAL' : 'SCANNED_WITHIN_LIMITS' };
     }
+    /**
+     * Re-reads the vault right before publication: the draft's source file must still exist with exactly the synced bytes.
+     * Uses the same guarded scan as sync (symlink, size, UTF-8 and boundary checks).
+     */
+    async verifySource(actor: Actor, root: string, doc: Pick<KnowledgeVersion, 'sourcePath' | 'contentHash' | 'synthetic'>) {
+        const scanned = await this.scan(actor, root, true);
+        const file = scanned.documents.find(d => d.sourcePath === doc.sourcePath && d.synthetic === doc.synthetic);
+        if (!file) throw new QcError(scanned.issues.some(i => i.path === doc.sourcePath) ? 'SOURCE_FILE_UNREADABLE' : 'SOURCE_FILE_MISSING', 409);
+        if (file.contentHash !== doc.contentHash) throw new QcError('SOURCE_CHANGED_SINCE_SYNC', 409);
+    }
     async sync(actor: Actor, repo: WorkspaceRepository, root: string) {
         const scanned = await this.scan(actor, root);
+        const synthetic = scanned.documents[0]?.synthetic ?? keyPath(await fs.realpath(root).catch(() => root)) === keyPath(await fs.realpath(this.syntheticRoot).catch(() => ''));
         return repo.mutate(actor.orgId, state => {
-            let added = 0;
+            let added = 0, updated = 0;
             for (const doc of scanned.documents) {
-                const previous = state.documents.filter(d => d.sourcePath === doc.sourcePath).sort((a, b) => b.revision - a.revision)[0];
+                const previous = state.documents.filter(d => d.sourcePath === doc.sourcePath && d.knowledgeClass !== 'VERIFIED_LEARNING_CASE').sort((a, b) => b.revision - a.revision)[0];
                 if (previous?.contentHash === doc.contentHash)
                     continue;
                 state.documents.push({ ...doc, id: randomUUID(), documentId: previous?.documentId ?? randomUUID(), orgId: actor.orgId, stagedBy: actor.id, revision: (previous?.revision ?? 0) + 1,
                     status: 'DRAFT', approvedBy: null, approvedAt: null, effectiveFrom: null, effectiveTo: null, departmentIds: [], rule: null });
-                added++;
+                previous ? updated++ : added++;
             }
-            audit(state, actor, 'KNOWLEDGE_DRAFT_SYNC', 'vault', { added, coverage: scanned.coverage });
-            return { added, issues: scanned.issues, coverage: scanned.coverage };
+            const pruned = pruneSupersededDrafts(state);
+            // Library documents whose source file is gone from this vault (unreadable files are reported as issues, not as missing).
+            const present = new Set([...scanned.documents.map(d => d.sourcePath), ...scanned.issues.map(i => i.path)]);
+            const latest = new Map<string, KnowledgeVersion>();
+            for (const d of state.documents) if (d.knowledgeClass !== 'VERIFIED_LEARNING_CASE' && d.synthetic === synthetic && (latest.get(d.documentId)?.revision ?? 0) < d.revision) latest.set(d.documentId, d);
+            const missingIds = new Set([...latest.values()].filter(d => !present.has(d.sourcePath)).map(d => d.documentId));
+            // Mark every version of a document whose file is gone (an older approved revision may be the one in force); clear when it is back.
+            const at = new Date().toISOString(), newlyMissing: string[] = [], restored: string[] = [];
+            for (const d of state.documents) {
+                if (d.knowledgeClass === 'VERIFIED_LEARNING_CASE' || d.synthetic !== synthetic) continue;
+                if (missingIds.has(d.documentId)) { if (!d.sourceMissingAt) { d.sourceMissingAt = at; newlyMissing.push(d.documentId); } }
+                else if (d.sourceMissingAt) { d.sourceMissingAt = null; restored.push(d.documentId); }
+            }
+            const active = new Set(effectiveKnowledgeVersions(actor, state, new Date(), synthetic).map(d => d.documentId));
+            const missing = [...latest.values()].filter(d => missingIds.has(d.documentId)).map(d => ({ sourcePath: d.sourcePath, status: d.status, active: active.has(d.documentId) }));
+            audit(state, actor, 'KNOWLEDGE_DRAFT_SYNC', 'vault', { added, updated, pruned: pruned.length, prunedRevisions: pruned, missing: missing.length, missingActive: missing.filter(m => m.active).length,
+                newlyMissing: [...new Set(newlyMissing)], restored: [...new Set(restored)], issues: scanned.issues.length, coverage: scanned.coverage });
+            return { added, updated, unchanged: scanned.documents.length - added - updated, scanned: scanned.documents.length, pruned: pruned.length, missing, issues: scanned.issues, coverage: scanned.coverage,
+                capacity: { documents: state.documents.length, limit: WORKSPACE_LIMITS.documents } };
         });
     }
+}
+/**
+ * Removes DRAFT revisions that were never approved and already have a newer revision of the same document.
+ * They can no longer be published meaningfully and only fill the workspace (limit WORKSPACE_LIMITS.documents).
+ * Approved, revoked and Verified Learning Case versions are history/evidence and are never touched.
+ * Returns content-free references of what was removed (for the audit trail).
+ */
+export function pruneSupersededDrafts(state: Workspace) {
+    const newest = new Map<string, number>();
+    for (const d of state.documents) newest.set(d.documentId, Math.max(newest.get(d.documentId) ?? 0, d.revision));
+    const pruned: Array<{ documentId: string; revision: number; contentHash: string }> = [];
+    state.documents = state.documents.filter(d => {
+        const superseded = d.status === 'DRAFT' && !d.approvedAt && d.knowledgeClass !== 'VERIFIED_LEARNING_CASE' && d.revision < (newest.get(d.documentId) ?? 0);
+        if (superseded) pruned.push({ documentId: d.documentId, revision: d.revision, contentHash: d.contentHash });
+        return !superseded;
+    });
+    return pruned;
 }
 function validRule(value: Rule): Rule {
     if (value && Object.keys(value).some(key => !['id', 'type', 'matchTerms', 'conflictGroup', 'slaSeconds', 'careIntervalDays'].includes(key)))
@@ -154,6 +203,8 @@ export class KnowledgeApprovalService {
                 throw new QcError('DOCUMENT_NOT_FOUND', 404);
             if (doc.status !== 'DRAFT' || doc.contentHash !== input.hash || digest(doc.markdown) !== input.hash)
                 throw new QcError('REVISION_OR_HASH_CONFLICT', 409);
+            if (doc.sourceMissingAt)
+                throw new QcError('SOURCE_FILE_MISSING', 409);
             if (state.documents.some(d => d.documentId === doc.documentId && d.approvedAt && d.revision >= doc.revision))
                 throw new QcError('STALE_PUBLICATION_REVISION', 409);
             if (state.documents.some(d => d.documentId === doc.documentId && d.approvedAt && d.effectiveFrom && d.effectiveFrom >= from && !cancelledSchedule(d)))

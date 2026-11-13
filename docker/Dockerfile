@@ -35,6 +35,7 @@ COPY scripts/readiness-probe.cjs /app/scripts/readiness-probe.cjs
 COPY scripts/bot-auto-backfill.cjs /app/scripts/bot-auto-backfill.cjs
 COPY scripts/manual-posting-migrate.cjs /app/scripts/manual-posting-migrate.cjs
 COPY scripts/native-ai-qc-migrate.cjs /app/scripts/native-ai-qc-migrate.cjs
+COPY scripts/aiqc-customer-archive-migrate.cjs /app/scripts/aiqc-customer-archive-migrate.cjs
 
 EXPOSE 3000
 ENTRYPOINT ["/sbin/tini", "--"]

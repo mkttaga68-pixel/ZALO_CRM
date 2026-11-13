@@ -17,6 +17,7 @@ import type { Server } from 'socket.io';
 import { assertActiveSession } from '../auth/active-session.js';
 import { LearningObsidianOutbox } from './learning-drafts.js';
 import { registerNightlyLearningScheduler, socketLearningNotifier } from './learning-routes.js';
+import { registerCustomerArchiveScheduler } from './customer-archive.js';
 async function resolveQcActor(userId: string, orgId: string) {
     const permissions: Action[] = [];
     for (const action of ['access', 'create', 'edit', 'approve', 'delete', 'view_all'] as const)
@@ -98,6 +99,9 @@ export async function registerNativeAiQualityControl(app: FastifyInstance) {
     const retentionOrg=environment.authorizedOrgId??environment.realDataOrgId;
     if (environment.enabled && !unavailableReason)
         registerNightlyLearningScheduler(app, repo, { storageMode: mode, realDataOrgId: environment.realDataOrgId, notifier: learningNotifier, outbox: learningOutbox });
+    // "Lưu trữ tin nhắn": nightly copy of 1-1 customer messages (no AI). Off unless AI_QC_CUSTOMER_ARCHIVE_ENABLED=true.
+    if (environment.enabled && !unavailableReason && environment.realData && mode === 'application')
+        registerCustomerArchiveScheduler(app, { realDataOrgId: environment.realDataOrgId });
     if(process.env.AI_QC_CONTINUOUS_LOCAL_ENABLED==='true'){
         if(mode!=='application'||unavailableReason)throw new QcError('CONTINUOUS_STORAGE_REQUIRED',503);
         const {registerContinuousLocal}=await import('./continuous-runtime.js');

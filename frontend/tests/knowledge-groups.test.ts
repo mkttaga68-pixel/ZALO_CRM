@@ -27,3 +27,17 @@ describe('knowledge library groups and revision counts',()=>{
   });
   it('ignores a scheduled revision canceled before its effective time',()=>{const a=doc(),canceled=doc({id:'r2',revision:2,status:'REVOKED',effectiveFrom:'2026-11-13T02:00:00Z',revokedAt:'2026-11-13T01:00:00Z'});expect(activeDocuments([a,canceled],now)).toEqual([a]);});
 });
+describe('Kho quy tắc: duyệt an toàn',()=>{
+  it('never defaults an unclassified document to INSULT and ties the confirmation to the chosen type',async()=>{
+    const {readFileSync}=await import('node:fs');
+    const src=readFileSync(new URL('../src/views/ai-quality-control/AIQualityControlDashboard.vue',import.meta.url),'utf8');
+    expect(src).toContain("type:analysisTypes.includes(group.key)?group.key:'',");
+    expect(src).not.toMatch(/group\.key:'INSULT'/);
+    expect(src).toContain(':disabled="busy || !publication.type || !publication.confirmed');
+    expect(src).toContain("watch(()=>publication.value.type,()=>{publication.value.confirmed=false;});");
+    expect(src).toContain("v-if=\"document.status==='DRAFT' && can('approve') && !document.sourceMissingAt\"");
+  });
+  it('an unclassified document has no suggested analysis group',()=>{
+    expect(documentGroup(doc({sourcePath:'99_KHAC/ghi-chu.md',rule:null,status:'DRAFT',approvedAt:null}))).toEqual({key:'UNASSIGNED',suggested:false});
+  });
+});

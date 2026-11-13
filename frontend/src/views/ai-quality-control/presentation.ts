@@ -23,6 +23,13 @@ const labels: Record<string, string> = {
 export const qcLabel = (value?: string | null): string => value ? labels[value] ?? 'Chưa xác định' : 'Chưa có dữ liệu';
 export const analysisOptions = ['INSULT', 'COURTESY', 'UNRESOLVED_REQUEST', 'KNOWLEDGE_MISMATCH'].map(value => ({ title: labels[value]!, value }));
 export const qcTone = (value: string): string => ['POTENTIAL_ISSUE', 'PENDING', 'OPEN', 'ACCEPTED_FOR_FOLLOWUP'].includes(value) ? 'warning' : ['COMPLETED', 'APPROVED', 'VERIFIED', 'NO_ISSUE_OBSERVED'].includes(value) ? 'success' : 'secondary';
+/** Lý do một tệp bị bỏ qua khi quét/đồng bộ thư mục Obsidian. */
+export const vaultIssueLabels: Record<string, string> = {
+  SYMLINK_REJECTED: 'Là liên kết tắt (symlink)', PATH_ESCAPED_VAULT: 'Trỏ ra ngoài thư mục Obsidian',
+  FILE_SIZE_OR_LINK_REJECTED: 'Tệp lớn hơn 256 KB hoặc là liên kết cứng', FILE_CHANGED_DURING_SCAN: 'Tệp đang được sửa trong lúc quét — hãy đồng bộ lại',
+  INVALID_UTF8: 'Không phải văn bản UTF-8', FILE_UNREADABLE: 'Không đọc được tệp',
+};
+export const vaultCoverageLabel = (coverage?: string) => coverage === 'PARTIAL' ? 'Chưa đầy đủ' : coverage === 'SCANNED_WITHIN_LIMITS' ? 'Đầy đủ' : coverage ?? '';
 export function qcError(code?: string): string {
   if (code && labels[code]) return labels[code]!;
   const errors: Record<string, string> = {
@@ -41,6 +48,20 @@ export function qcError(code?: string): string {
     DEPARTMENT_HAS_NO_ACTIVE_MEMBERS: 'Phòng ban chưa có thành viên đang hoạt động.', DEPARTMENT_LOCAL_TEST_KILL_SWITCH_ACTIVE: 'Quét thử đang tạm dừng theo yêu cầu quản trị viên.',
     DEPARTMENT_MONITOR_CONFIG_REQUIRED: 'Hãy lưu cấu hình phòng ban trước khi quét thử.',
     OLLAMA_RESOURCE_LIMIT: 'Máy chủ chưa đủ tài nguyên để phân tích. Vui lòng thử lại sau.', OLLAMA_QUEUE_FULL: 'AI đang bận. Vui lòng thử lại sau.',
+    // Kho quy tắc / đồng bộ Obsidian
+    VAULT_DOCUMENT_LIMIT: 'Thư mục Obsidian có hơn 500 tài liệu, vượt giới hạn một lần đồng bộ. Hãy tách bớt tài liệu không phải quy tắc ra thư mục khác.',
+    VAULT_ENTRY_LIMIT: 'Thư mục Obsidian có quá nhiều tệp/thư mục (trên 2.000). Hãy dọn bớt tệp không cần thiết.',
+    VAULT_DEPTH_LIMIT: 'Thư mục Obsidian lồng quá sâu (trên 8 cấp).',
+    VAULT_NOT_FOUND_OR_SYMLINK: 'Không tìm thấy thư mục Obsidian, hoặc đường dẫn là liên kết tắt.', VAULT_PATH_MUST_BE_ABSOLUTE: 'Đường dẫn thư mục Obsidian phải là đường dẫn đầy đủ.',
+    VAULT_NOT_ALLOWED_FOR_TENANT: 'Thư mục này chưa được cấp phép cho tổ chức.', VAULT_SYMLINK_BOUNDARY_REJECTED: 'Thư mục Obsidian đi qua liên kết tắt nên bị từ chối.',
+    WORKSPACE_CAPACITY_REQUIRES_RETENTION_REVIEW: 'Kho dữ liệu AIQC đã đầy. Hãy liên hệ quản trị viên để rà soát thời gian lưu trữ trước khi đồng bộ thêm.',
+    DOCUMENT_NOT_FOUND: 'Phiên bản tài liệu này không còn (có thể đã được thay bằng bản mới hơn khi đồng bộ). Hãy mở lại tài liệu.',
+    REVISION_OR_HASH_CONFLICT: 'Tài liệu đã thay đổi hoặc không còn ở trạng thái phù hợp. Vui lòng tải lại.',
+    STALE_PUBLICATION_REVISION: 'Đã có phiên bản mới hơn được duyệt cho tài liệu này.',
+    SOURCE_FILE_MISSING: 'Tệp nguồn đã bị xoá khỏi Obsidian nên không thể duyệt. Khôi phục tệp rồi đồng bộ lại.',
+    SOURCE_FILE_UNREADABLE: 'Không đọc được tệp nguồn trong Obsidian (tệp quá lớn, không phải UTF-8 hoặc là liên kết). Hãy kiểm tra tệp rồi đồng bộ lại.',
+    SOURCE_CHANGED_SINCE_SYNC: 'Tệp trong Obsidian đã được sửa sau lần đồng bộ gần nhất. Hãy đồng bộ lại và duyệt bản nháp mới.',
+    INVALID_APPROVED_RULE: 'Thiết lập quy tắc chưa hợp lệ. Kiểm tra mã quy tắc, loại phân tích và từ khóa đối chiếu.',
   };
   return errors[code ?? ''] ?? 'Chưa thể thực hiện thao tác. Vui lòng thử lại hoặc liên hệ quản trị viên.';
 }

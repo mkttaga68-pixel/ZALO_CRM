@@ -172,7 +172,7 @@ const ERRORS: Record<string, string> = {
   QC_FORBIDDEN: 'Bạn không có quyền thực hiện thao tác này.', APPROVED_RETENTION_POLICY_REQUIRED: 'Chưa có chính sách lưu trữ được duyệt trong Cài đặt.', PURGE_REASON_REQUIRED: 'Vui lòng nhập lý do dọn dữ liệu.',
   LEARNING_DRAFT_NOT_FOUND: 'Bản nháp không còn tồn tại hoặc bạn không có quyền xem.', LEARNING_SANDBOX_TRIGGER_DISABLED_WITH_REAL_DATA: 'Chỉ chạy thử được khi hệ thống dùng dữ liệu thử nghiệm.',
 };
-const message = (e: unknown) => { const r = e as { response?: { status?: number; data?: { error?: string } } }; const code = r.response?.data?.error; return r.response?.status === 404 && !code ? 'Tính năng chưa sẵn sàng trên máy chủ hiện tại.' : ERRORS[code ?? ''] ?? qcError(code); };
+const message = (e: unknown) => { const r = e as { response?: { status?: number; data?: { error?: string } } }; const code = r.response?.data?.error; return r.response?.status === 404 && (!code || code === 'not_found') ? 'Tính năng chưa sẵn sàng trên máy chủ hiện tại.' : ERRORS[code ?? ''] ?? qcError(code); };
 const conflict = (e: unknown) => (e as { response?: { status?: number } }).response?.status === 409;
 
 async function load() {

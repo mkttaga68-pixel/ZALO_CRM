@@ -7,3 +7,44 @@ model NativeAiQcWorkspace {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@map("native_ai_qc_workspace")
 }
+
+// "Lưu trữ tin nhắn": nightly copy of 1-1 customer messages (migration 20261113200000_ai_qc_customer_message_archive,
+// applied with scripts/aiqc-customer-archive-migrate.cjs). Deliberately no relations to CRM tables.
+model AiQcCustomerMessageArchive {
+  messageId       String   @id @map("message_id")
+  orgId           String   @map("org_id")
+  contactId       String   @map("contact_id")
+  conversationId  String   @map("conversation_id")
+  zaloAccountId   String   @map("zalo_account_id")
+  zaloAccountName String?  @map("zalo_account_name")
+  senderType      String   @map("sender_type")
+  senderName      String?  @map("sender_name")
+  sentVia         String   @default("user") @map("sent_via")
+  contentType     String   @default("text") @map("content_type")
+  content         String?
+  sentAt          DateTime @map("sent_at") @db.Timestamptz(6)
+  archivedAt      DateTime @default(now()) @map("archived_at") @db.Timestamptz(6)
+  runId           String   @map("run_id")
+
+  @@index([orgId, contactId, sentAt(sort: Desc)], map: "ai_qc_cma_contact")
+  @@index([orgId, runId], map: "ai_qc_cma_run")
+  @@map("ai_qc_customer_message_archive")
+}
+
+model AiQcCustomerArchiveRun {
+  id         String    @id
+  orgId      String    @map("org_id")
+  localDate  String    @map("local_date")
+  trigger    String
+  status     String    @default("RUNNING")
+  startedAt  DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(6)
+  cursorFrom DateTime? @map("cursor_from") @db.Timestamptz(6)
+  cursorTo   DateTime  @map("cursor_to") @db.Timestamptz(6)
+  customers  Int       @default(0)
+  messages   Int       @default(0)
+  errorCode  String?   @map("error_code")
+
+  @@index([orgId, startedAt(sort: Desc)], map: "ai_qc_car_org")
+  @@map("ai_qc_customer_archive_run")
+}
