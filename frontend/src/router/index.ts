@@ -2,8 +2,14 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { firstBotAutoRoute } from './bot-auto-navigation';
+import { canAccessPath, firstAllowedPath } from './access-policy';
 
 const routes = [
+  {
+    path: '/forbidden', name: 'Forbidden',
+    component: () => import('@/views/ForbiddenView.vue'),
+    meta: { requiresAuth: true },
+  },
   {
     path: '/login',
     name: 'Login',
@@ -192,6 +198,11 @@ const routes = [
   },
 ];
 
+// Explicit build opt-in; authentication/RBAC and backend flags remain mandatory.
+if (import.meta.env.VITE_AI_QC_ENABLED === 'true') {
+  routes.unshift({path:'/ai-quality-control',name:'AIQualityControl',component:()=>import('@/views/ai-quality-control/AIQualityControlDashboard.vue'),meta:{requiresAuth:true,rbacResource:'ai_quality_control'}});
+}
+
 export const router = createRouter({
   history: createWebHistory(),
   routes,
@@ -230,7 +241,7 @@ router.beforeEach(async (to, _from, next) => {
       return next('/login');
     }
     // Fetch profile if not loaded yet
-    if (!authStore.user) {
+    {
       try { await authStore.init(); }
       catch {
         // Keep credentials on temporary failures, but never open a protected view
@@ -245,12 +256,16 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   if (to.path === '/automation/bot' || to.path === '/automation/bot/') {
-    return next(firstBotAutoRoute(authStore.hasGrant) ?? '/');
+    return next(firstBotAutoRoute(authStore.hasGrant) ?? '/forbidden');
   }
 
   const rbacResource = to.meta.rbacResource as string | undefined;
   if (rbacResource && !authStore.hasGrant(rbacResource, 'access')) {
-    return next('/');
+    return next('/forbidden');
+  }
+
+  if (to.meta.requiresAuth && !canAccessPath(to.path, authStore.hasGrant)) {
+    return next(to.path === '/' ? firstAllowedPath(authStore.hasGrant) : '/forbidden');
   }
 
   next();

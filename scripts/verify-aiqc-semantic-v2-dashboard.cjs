@@ -1,0 +1,23 @@
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const repo=path.resolve(__dirname,'..'),base=path.resolve(repo,'..','aiqc-browser-e2e-20261101'),out=path.join(repo,'evidence/ollama-semantic-v2-20261102');
+const {chromium}=require(path.join(base,'tools/node_modules/playwright-core'));
+const fixture=JSON.parse(fs.readFileSync(path.join(base,'fixtures.json'),'utf8'));
+const password=fs.readFileSync(path.resolve(repo,'..','native-ai-qc-runtime/mvxj0im3/SYNTHETIC-LOGIN.txt'),'utf8').match(/^Password: (.+)$/m)?.[1];
+if(!password?.startsWith('Synthetic-QC-'))throw Error('SYNTHETIC_LOGIN_REQUIRED');
+(async()=>{let browser;try{
+ browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--disable-background-networking','--disable-component-update','--disable-sync','--no-first-run']});
+ const context=await browser.newContext({viewport:{width:1500,height:1100},serviceWorkers:'block'});
+ const allowed=u=>{const x=new URL(u);return ['localhost','127.0.0.1'].includes(x.hostname)&&['5173','3091'].includes(x.port);};
+ await context.route('**/*',r=>allowed(r.request().url())?r.continue():r.abort());
+ await context.routeWebSocket('**/*',ws=>allowed(ws.url())?ws.connectToServer():ws.close());
+ const page=await context.newPage();await page.goto('http://localhost:5173/ai-quality-control');
+ await page.getByLabel(/Email/).fill(fixture.owner.email);await page.locator('input[type=password]').fill(password);await page.locator('button[type=submit]').click();
+ await page.waitForURL(u=>u.pathname!=='/login',{timeout:30000});await page.goto('http://localhost:5173/ai-quality-control');
+ await page.getByRole('heading',{name:'AI Quality Control',exact:true}).waitFor();await page.getByRole('tab').nth(1).click();
+ await page.locator('tr').filter({hasText:'ollama'}).first().waitFor();
+ const count=await page.locator('tr').filter({hasText:'ollama'}).count();assert.equal(count,60);
+ await page.screenshot({path:path.join(out,'dashboard.png'),fullPage:true});
+ const result=await page.evaluate(async()=>{const token=localStorage.getItem('token')||sessionStorage.getItem('token');const r=await fetch('/api/v1/ai-quality-control/workspace',{headers:{Authorization:'Bearer '+token}});const w=await r.json();const runs=w.runs.filter(r=>r.provider==='ollama'&&r.usage?.providerVersion==='ollama-semantic-v2');const e=await fetch('/api/v1/ai-quality-control/runs/'+runs[0].id,{headers:{Authorization:'Bearer '+token}});return {runs:runs.length,syntheticOnly:runs.every(r=>r.conversation.source==='SERVER_SYNTHETIC'),evidenceStatus:e.status,observations:(await e.json()).observations};});
+ assert.equal(result.runs,40);assert.equal(result.syntheticOnly,true);assert.equal(result.evidenceStatus,200);assert.ok(result.observations.length);
+ fs.writeFileSync(path.join(out,'dashboard-verification.json'),JSON.stringify({status:'PASS',rows:count,...result},null,2));console.log(JSON.stringify({status:'PASS',rows:count,syntheticOnly:true}));
+}finally{await browser?.close();}})().catch(e=>{console.error(e.message.replaceAll(password,'[REDACTED]'));process.exitCode=1;});

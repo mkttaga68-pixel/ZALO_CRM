@@ -10,6 +10,7 @@
  */
 import { defineStore } from 'pinia';
 import { api } from '@/api/index';
+import { useAuthStore } from '@/stores/auth';
 
 export interface DepartmentNode {
   id: string;
@@ -34,6 +35,8 @@ export interface PermissionGroupNode {
   grants: Record<string, Record<string, boolean>>;
   memberCount: number;
   children: PermissionGroupNode[];
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
 export interface RbacUser {
@@ -49,6 +52,9 @@ export interface RbacUser {
     department: { id: string; name: string; path: string };
   } | null;
   isActive: boolean;
+  canManageAccess?: boolean;
+  canManagePermissions?: boolean;
+  assignableGroupIds?: string[];
 }
 
 export const useRbacStore = defineStore('rbac', {
@@ -56,11 +62,12 @@ export const useRbacStore = defineStore('rbac', {
     departments: [] as DepartmentNode[],
     permissionGroups: [] as PermissionGroupNode[],
     users: [] as RbacUser[],
-    matrixMeta: null as null | { resources: string[]; actions: string[]; resourceActions: Record<string, string[]> },
+    matrixMeta: null as null | { resources: string[]; actions: string[]; resourceActions: Record<string, string[]>; authority?: { actorGroupId: string | null; canCreateRoot: boolean } },
     loading: false,
   }),
   actions: {
     async loadDepartments() {
+      if (!useAuthStore().hasGrant('department')) { this.departments = []; return; }
       this.loading = true;
       try {
         const { data } = await api.get('/departments');
@@ -70,6 +77,7 @@ export const useRbacStore = defineStore('rbac', {
       }
     },
     async loadPermissionGroups() {
+      if (!useAuthStore().hasGrant('permission_group')) { this.permissionGroups = []; this.matrixMeta = null; return; }
       this.loading = true;
       try {
         const [tree, meta] = await Promise.all([
@@ -83,6 +91,7 @@ export const useRbacStore = defineStore('rbac', {
       }
     },
     async loadUsers(filter: { departmentId?: string; permissionGroupId?: string; q?: string } = {}) {
+      if (!useAuthStore().hasGrant('user')) { this.users = []; return; }
       this.loading = true;
       try {
         const params = new URLSearchParams();

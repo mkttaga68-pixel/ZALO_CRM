@@ -1,0 +1,3 @@
+export interface ObservationEmployee {id:string;name:string}
+export interface ObservationFinding {type:string;status:string;explanation:string;missingContext:string[];employees:ObservationEmployee[];evidence:Array<{id:string;text:string;role:string;occurredAt:string;employee:ObservationEmployee|null}>;citations:Array<{documentId:string;revision:number;quote:string;sourcePath:string}>}
+export interface ObservationResult {conversationId:string;title?:string;employees:ObservationEmployee[];runId?:string;status?:string;reviewStatus?:string;createdAt?:string;summary?:string;error?:string;missingContext?:string[];findings?:ObservationFinding[]}

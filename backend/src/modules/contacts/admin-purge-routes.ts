@@ -16,6 +16,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { requireRole } from '../auth/role-middleware.js';
+import { requireGrant } from '../rbac/rbac-middleware.js';
 import {
   listPurgeTargets,
   buildPurgePlan,
@@ -45,6 +46,7 @@ function readScope(body: ScopeBody | undefined) {
 export async function adminPurgeRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
   app.addHook('preHandler', requireRole('owner', 'admin'));
+  app.addHook('preHandler', requireGrant('contact_data_purge', 'access'));
 
   // ── Danh sách nhân viên có nick Zalo + số KH đã đồng bộ qua từng nick ─────
   app.get('/api/v1/admin/contact-purge/targets', async (request: FastifyRequest) => {

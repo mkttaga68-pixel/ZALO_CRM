@@ -1,0 +1,24 @@
+// Builds a derivative image locally: no install, pull, database, production tag or container mutation.
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),{spawnSync}=require('node:child_process');
+const repo=path.resolve(__dirname,'..'),root=path.resolve(repo,'..','aiqc-readiness-closure-20261102');
+const base='sha256:875af855e10402bf3da8c74eefd53f257584156397dbaf0934c6846ab0092989';
+const docker=args=>{const r=spawnSync('docker',args,{encoding:'utf8',windowsHide:true,timeout:120000,maxBuffer:4e6});if(r.status!==0)throw Error('CANDIDATE_DOCKER_FAILED: '+r.stderr.slice(-2000));return r.stdout.trim();};
+const identity=()=>JSON.parse(docker(['inspect','--format','{"id":{{json .Id}},"image":{{json .Image}},"started":{{json .State.StartedAt}}}','zalo-crm-app']));
+const before=identity();if(before.image!==base||docker(['image','inspect','zl-crm-app:ai-qc-shared-20261101','--format','{{.Id}}'])!==base)throw Error('BASE_IMAGE_MISMATCH');
+const files=['analysis','knowledge','providers','training','openai-control'];
+const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+const head=spawnSync('git',['-c','safe.directory='+repo.replaceAll('\\','/'),'rev-parse','HEAD'],{cwd:repo,encoding:'utf8'}).stdout.trim();
+const manifest={parentCommit:head,sourceIsUncommitted:true,baseImage:base,files:files.map(name=>({source:'backend/src/modules/ai-quality-control/'+name+'.ts',sourceSha256:sha(fs.readFileSync(path.join(repo,'backend/src/modules/ai-quality-control',name+'.ts'))),target:'/app/dist/modules/ai-quality-control/'+name+'.js',compiledSha256:sha(fs.readFileSync(path.join(root,'compiled/modules/ai-quality-control',name+'.js')))}))};
+const operatorScript=fs.readFileSync(path.join(repo,'scripts/initialize-aiqc-openai-control.cjs'));
+manifest.files.push({source:'scripts/initialize-aiqc-openai-control.cjs',sourceSha256:sha(operatorScript),target:'/app/scripts/initialize-aiqc-openai-control.cjs',compiledSha256:sha(operatorScript)});
+const fingerprint=sha(JSON.stringify(manifest)),tag='zl-crm-app:obsidian-readiness-20261102-'+fingerprint.slice(0,10),context=path.join(root,'image-context-'+fingerprint.slice(0,10));
+fs.mkdirSync(path.join(context,'patch/modules/ai-quality-control'),{recursive:true});
+for(const name of files)fs.copyFileSync(path.join(root,'compiled/modules/ai-quality-control',name+'.js'),path.join(context,'patch/modules/ai-quality-control',name+'.js'));
+fs.writeFileSync(path.join(context,'manifest.json'),JSON.stringify({...manifest,fingerprint},null,2));
+fs.writeFileSync(path.join(context,'operator.cjs'),operatorScript);
+fs.writeFileSync(path.join(context,'Dockerfile'),`FROM zl-crm-app:ai-qc-shared-20261101\nLABEL io.zlcrm.parent-commit="${head}" io.zlcrm.patch-manifest="${fingerprint}"\nCOPY patch/ /app/dist/\nCOPY operator.cjs /app/scripts/initialize-aiqc-openai-control.cjs\nCOPY manifest.json /app/aiqc-candidate-manifest.json\nENV AI_QC_ENABLED=false AI_QC_REAL_API_ENABLED=false AI_QC_OUTBOUND_TEST_APPROVED=false AI_QC_REAL_DATA_ENABLED=false AI_QC_REAL_DATA_OUTBOUND_APPROVED=false AI_QC_AUTO_MONITOR_ENABLED=false\n`);
+const result=spawnSync('docker',['build','--pull=false','--network=none','--tag',tag,context],{encoding:'utf8',windowsHide:true,timeout:120000,maxBuffer:4e6});
+fs.writeFileSync(path.join(root,'image-build.log'),result.stdout+'\n'+result.stderr);if(result.status!==0)throw Error('CANDIDATE_BUILD_FAILED_SEE_LOG');
+const image=JSON.parse(docker(['image','inspect',tag]))[0],after=identity();if(JSON.stringify(before)!==JSON.stringify(after))throw Error('PRODUCTION_CHANGED');
+const evidence={...manifest,fingerprint,tag,imageId:image.Id,repoDigests:image.RepoDigests??[],productionBefore:before,productionAfter:after,productionUnchanged:true,networkDuringBuild:'none',dependencyDownloads:0,frontendInherited:true,appEntrypointInherited:true,sharedModulesChanged:false,monitoringBootstrapInherited:true,patchContext:context,build:'PASS'};
+fs.writeFileSync(path.join(root,'candidate-image.json'),JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence,null,2));

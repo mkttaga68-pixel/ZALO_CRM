@@ -1,0 +1,20 @@
+# Phase A review artifact: AIQC routes and all analysis/data paths stay OFF.
+# Merge after the three active zl-crm Compose files. This is not an apply command.
+services:
+  app:
+    image: zl-crm-app@sha256:875af855e10402bf3da8c74eefd53f257584156397dbaf0934c6846ab0092989
+    pull_policy: never
+    build: !reset null
+    environment:
+      AI_QC_ENABLED: "false"
+      AI_QC_OLLAMA_ENABLED: "false"
+      AI_QC_STORAGE: application
+      AI_QC_SANDBOX_RUNTIME: "false"
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"
+      AI_QC_REAL_DATA_ENABLED: "false"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"
+      AI_QC_AUTO_MONITOR_ENABLED: "false"
+      AI_QC_MANUAL_REAL_TEST_ENABLED: "false"
+      AI_QC_MANUAL_RETENTION_ENABLED: "false"
+      AI_QC_OPENAI_REMOVED: "true"

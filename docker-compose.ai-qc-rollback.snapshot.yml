@@ -1,0 +1,13 @@
+# ROLLBACK to the exact pre-2026-11-11 runtime (same code, previous AIQC flags from the three base files).
+# Use only if Phase A post-deploy checks fail. Merge LAST after the three active zl-crm files.
+services:
+  app:
+    image: zl-crm-app@sha256:e3688c05dc3d785c0e7ce4667c3338d34e99d0aeb50896e3a790cad7fa6de5c4
+    pull_policy: never
+    build: !reset null
+    healthcheck:
+      test: ["CMD", "node", "scripts/readiness-probe.cjs"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3

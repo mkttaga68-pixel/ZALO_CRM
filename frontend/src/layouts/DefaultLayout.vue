@@ -16,7 +16,7 @@
       <!-- Primary nav tabs (Excel structure). nav-wrap cắt phần thừa; số tab hiển thị
            do JS tính theo chiều rộng khả dụng, tab không vừa → gom vào menu "Thêm ▾". -->
       <div ref="navWrapRef" class="nav-wrap">
-        <nav ref="navTabsRef" class="nav-tabs">
+        <nav class="nav-tabs">
           <RouterLink
             v-for="tab in visibleTabs"
             :key="tab.path"
@@ -30,7 +30,7 @@
           <!-- Overflow: các tab không vừa chiều ngang dồn vào đây -->
           <v-menu v-if="overflowTabs.length" open-on-hover>
             <template #activator="{ props: act }">
-              <button class="nav-tab" :class="{ active: overflowTabs.some(isActive) }" v-bind="act">
+              <button type="button" class="nav-tab" :class="{ active: overflowTabs.some(isActive) }" v-bind="act">
                 <span class="ic">⋯</span>Thêm<span class="caret">▾</span>
               </button>
             </template>
@@ -47,6 +47,11 @@
             </v-list>
           </v-menu>
         </nav>
+      </div>
+
+      <div ref="navMeasureRef" class="nav-tabs nav-measure" aria-hidden="true" inert>
+        <span v-for="tab in allowedPrimaryTabs" :key="tab.path" class="nav-tab"><span class="ic">{{ tab.icon }}</span>{{ tab.label }}</span>
+        <span ref="moreMeasureRef" class="nav-tab"><span class="ic">⋯</span>Thêm<span class="caret">▾</span></span>
       </div>
 
       <!-- Trailing dropdowns (luôn hiển thị, không bị overflow) -->
@@ -74,7 +79,7 @@
 
         <!-- Legacy automation dropdown (kept for backward compat — Phase 7 Bot-Auto
              is now a top-level primary tab via primaryTabs array above) -->
-        <v-menu open-on-hover>
+        <v-menu v-if="canAccessPath('/automation', authStore.hasGrant)" open-on-hover>
           <template #activator="{ props: act }">
             <button
               class="nav-tab"
@@ -98,18 +103,18 @@
           <v-list density="compact" min-width="240">
             <v-list-item to="/settings/personal/profile" title="Hồ sơ của tôi" prepend-icon="mdi-account-circle-outline" />
             <v-divider />
-            <v-list-subheader>Tổ chức &amp; Nhân sự</v-list-subheader>
-            <v-list-item to="/settings/team/users" title="Nhân viên" prepend-icon="mdi-account-cog-outline" />
-            <v-list-item to="/settings/team/teams" title="Đội nhóm" prepend-icon="mdi-account-group-outline" />
-            <v-list-item to="/settings/team/roles" title="Vai trò &amp; Phân quyền" prepend-icon="mdi-shield-account-outline" />
+            <v-list-subheader v-if="['user', 'department', 'permission_group'].some(r => authStore.hasGrant(r))">Tổ chức &amp; Nhân sự</v-list-subheader>
+            <v-list-item v-if="canAccessPath('/settings/team/users', authStore.hasGrant)" to="/settings/team/users" title="Nhân viên" prepend-icon="mdi-account-cog-outline" />
+            <v-list-item v-if="canAccessPath('/settings/team/teams', authStore.hasGrant)" to="/settings/team/teams" title="Đội nhóm" prepend-icon="mdi-account-group-outline" />
+            <v-list-item v-if="canAccessPath('/settings/team/roles', authStore.hasGrant)" to="/settings/team/roles" title="Vai trò &amp; Phân quyền" prepend-icon="mdi-shield-account-outline" />
             <v-divider />
-            <v-list-subheader>CRM &amp; Kênh</v-list-subheader>
-            <v-list-item to="/settings/crm/tags" title="Tag CRM" prepend-icon="mdi-tag-multiple-outline" />
-            <v-list-item to="/settings/crm/scoring" title="Lead scoring" prepend-icon="mdi-chart-line" />
-            <v-list-item to="/settings/channels/zalo" title="Tài khoản Zalo" prepend-icon="mdi-cellphone-link" />
-            <v-list-item to="/settings/channels/integrations" title="Tích hợp" prepend-icon="mdi-connection" />
+            <v-list-subheader v-if="['settings', 'zalo_account', 'integration'].some(r => authStore.hasGrant(r))">CRM &amp; Kênh</v-list-subheader>
+            <v-list-item v-if="canAccessPath('/settings/crm/tags', authStore.hasGrant)" to="/settings/crm/tags" title="Tag CRM" prepend-icon="mdi-tag-multiple-outline" />
+            <v-list-item v-if="canAccessPath('/settings/crm/scoring', authStore.hasGrant)" to="/settings/crm/scoring" title="Lead scoring" prepend-icon="mdi-chart-line" />
+            <v-list-item v-if="canAccessPath('/settings/channels/zalo', authStore.hasGrant)" to="/settings/channels/zalo" title="Tài khoản Zalo" prepend-icon="mdi-cellphone-link" />
+            <v-list-item v-if="canAccessPath('/settings/channels/integrations', authStore.hasGrant)" to="/settings/channels/integrations" title="Tích hợp" prepend-icon="mdi-connection" />
             <v-divider />
-            <v-list-item to="/settings/dev/api" title="API &amp; Webhook" prepend-icon="mdi-api" />
+            <v-list-item v-if="canAccessPath('/settings/dev/api', authStore.hasGrant)" to="/settings/dev/api" title="API &amp; Webhook" prepend-icon="mdi-api" />
             <v-divider />
             <v-list-item to="/settings" title="📋 Xem tất cả cài đặt" prepend-icon="mdi-cog-outline" />
           </v-list>
@@ -126,17 +131,18 @@
       -->
 
       <!-- Global search trigger -->
-      <GlobalSearch class="topnav-search" />
+      <GlobalSearch v-if="canUseGlobalSearch(authStore.hasGrant)" class="topnav-search" />
 
       <!-- Right icon buttons -->
-      <RouterLink to="/groups" class="icon-btn" title="Nhóm">
+      <RouterLink v-if="canAccessPath('/groups', authStore.hasGrant)" to="/groups" class="icon-btn" title="Nhóm">
         <v-icon size="18">mdi-account-group-outline</v-icon>
       </RouterLink>
 
       <!-- Điểm mở rộng UI: plugin có thể chèn action vào topbar. Rỗng nếu không có plugin. -->
       <ExtensionSlot name="topbar.actions" />
 
-      <NotificationBell class="icon-btn-wrap" />
+      <AiqcAlertBell v-if="aiqcAlertsEnabled" class="icon-btn-wrap" />
+      <NotificationBell v-if="canUseNotifications(authStore.hasGrant)" class="icon-btn-wrap" />
 
       <v-menu>
         <template #activator="{ props: act }">
@@ -161,7 +167,7 @@
     </v-main>
 
     <!-- Popup nổi: hỏi AI về tình trạng khách hàng hôm nay -->
-    <DailyBriefFab />
+    <DailyBriefFab v-if="authStore.hasGrant('ai_assistant')" />
 
     <!-- Global toast queue -->
     <ToastContainer />
@@ -169,13 +175,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
 import { useTheme } from 'vuetify';
 import { useRoute, RouterLink } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { firstBotAutoRoute } from '@/router/bot-auto-navigation';
+import { canAccessPath, canUseGlobalSearch, canUseNotifications } from '@/router/access-policy';
 import { useRouter } from 'vue-router';
 import NotificationBell from '@/components/NotificationBell.vue';
+import AiqcAlertBell from '@/components/AiqcAlertBell.vue';
 import GlobalSearch from '@/components/GlobalSearch.vue';
 import ToastContainer from '@/components/ui/ToastContainer.vue';
 import ExtensionSlot from '@/components/ExtensionSlot.vue';
@@ -183,6 +191,7 @@ import DailyBriefFab from '@/components/ai/DailyBriefFab.vue';
 const theme = useTheme();
 const route = useRoute();
 const authStore = useAuthStore();
+const aiqcAlertsEnabled = computed(() => import.meta.env.VITE_AI_QC_ENABLED === 'true' && authStore.hasGrant('ai_quality_control', 'access'));
 const router = useRouter();
 
 const isDark = ref((localStorage.getItem('theme') || 'smax-light') === 'legacy-dark');
@@ -216,7 +225,12 @@ const primaryTabs: NavTab[] = [
 ];
 const allowedPrimaryTabs = computed(() => {
   const firstBotDestination = firstBotAutoRoute(authStore.hasGrant);
-  return primaryTabs
+  const tabs = [...primaryTabs];
+  if (import.meta.env.VITE_AI_QC_ENABLED === 'true' && authStore.hasGrant('ai_quality_control','access')) {
+    tabs.push({path:'/ai-quality-control',label:'AI Quality Control',icon:'🧠'});
+  }
+  return tabs
+    .filter(tab => canAccessPath(tab.path, authStore.hasGrant) || (tab.matchPrefix === '/automation/bot' && firstBotDestination))
     .filter((tab) => tab.matchPrefix !== '/automation/bot' || firstBotDestination)
     .map((tab) => tab.matchPrefix === '/automation/bot' && firstBotDestination
       ? { ...tab, path: firstBotDestination }
@@ -240,10 +254,12 @@ const isLegacyAutomationActive = computed(
 );
 
 // ── Responsive overflow: tab nào không vừa chiều ngang → dồn vào menu "Thêm ▾" ──
-// Đo chiều rộng tự nhiên của từng tab MỘT LẦN (lúc render đầy đủ), rồi tính số tab
-// vừa khít theo chiều rộng vùng nav hiện tại; phần dư hiển thị trong dropdown.
+// Đo toàn bộ tab trong hàng ẩn khi quyền hoặc kích thước thay đổi.
+// Các mục không vừa luôn có trong dropdown, kể cả trước lần đo đầu tiên.
 const navWrapRef = ref<HTMLElement | null>(null);
-const navTabsRef = ref<HTMLElement | null>(null);
+const navMeasureRef = ref<HTMLElement | null>(null);
+const moreMeasureRef = ref<HTMLElement | null>(null);
+const moreWidth = ref(90);
 const spacerRef = ref<HTMLElement | null>(null);
 const tabWidths = ref<number[]>([]);
 const containerW = ref(0);
@@ -251,8 +267,8 @@ const containerW = ref(0);
 const visibleCount = computed(() => {
   const widths = tabWidths.value;
   const avail = containerW.value;
-  if (!widths.length || !avail) return allowedPrimaryTabs.value.length; // chưa đo → render đủ
-  const GAP = 2, SAFE = 6, THEM_W = 64; // nút "Thêm" ~64px
+  if (widths.length !== allowedPrimaryTabs.value.length || !avail) return 0;
+  const GAP = 2, SAFE = 8, THEM_W = moreWidth.value;
   let total = SAFE;
   for (const w of widths) total += w + GAP;
   if (total <= avail) return allowedPrimaryTabs.value.length; // vừa hết, không cần "Thêm"
@@ -263,19 +279,21 @@ const visibleCount = computed(() => {
     used += w + GAP;
     count++;
   }
-  return Math.max(1, count); // luôn chừa ít nhất 1 tab
+  return count;
 });
 const visibleTabs = computed(() => allowedPrimaryTabs.value.slice(0, visibleCount.value));
 const overflowTabs = computed(() => allowedPrimaryTabs.value.slice(visibleCount.value));
 
 function measureTabs() {
-  const el = navTabsRef.value;
+  const el = navMeasureRef.value;
   if (!el) return;
   const ws: number[] = [];
-  el.querySelectorAll('.nav-tab').forEach((n) => ws.push((n as HTMLElement).offsetWidth));
-  // Chỉ ghi khi đo được TOÀN BỘ tập tab (lúc chưa cắt) — tránh ghi đè bằng tập đã cắt.
+  el.querySelectorAll(':scope > .nav-tab').forEach((n) => ws.push((n as HTMLElement).offsetWidth));
+  // Hàng đo luôn chứa toàn bộ tab, độc lập với các mục đang hiển thị.
   if (ws.length >= allowedPrimaryTabs.value.length) {
-    tabWidths.value = ws.slice(0, allowedPrimaryTabs.value.length);
+    const measured = ws.slice(0, allowedPrimaryTabs.value.length);
+    if (measured.some((w, i) => w !== tabWidths.value[i]) || measured.length !== tabWidths.value.length) tabWidths.value = measured;
+    moreWidth.value = moreMeasureRef.value?.offsetWidth || 90;
   }
 }
 // Chiều rộng KHẢ DỤNG cho dải tab = nav-wrap + spacer (bất biến: cắt tab thì nav-wrap
@@ -286,15 +304,18 @@ function updateContainer() {
   containerW.value = wrap + slack;
 }
 
+watch(allowedPrimaryTabs, () => { measureTabs(); updateContainer(); }, { flush: 'post' });
+
 let ro: ResizeObserver | null = null;
 onMounted(() => {
   nextTick(() => {
     measureTabs();
     updateContainer();
   });
-  ro = new ResizeObserver(() => updateContainer());
+  ro = new ResizeObserver(() => { measureTabs(); updateContainer(); });
   if (navWrapRef.value) ro.observe(navWrapRef.value);
   if (spacerRef.value) ro.observe(spacerRef.value);
+  if (navMeasureRef.value) ro.observe(navMeasureRef.value);
 });
 onBeforeUnmount(() => ro?.disconnect());
 
@@ -383,6 +404,9 @@ function logout() {
   display: flex; align-items: center; gap: 2px;
   flex-wrap: nowrap;
 }
+.nav-measure{position:fixed;left:0;top:0;width:max-content;visibility:hidden;pointer-events:none;contain:layout style}
+.nav-tabs>.nav-tab{flex-shrink:0}
+.nav-wrap{flex-shrink:1;min-width:90px}
 .overflow-ic { font-size: 15px; margin-right: 4px; }
 .nav-tab {
   display: inline-flex; align-items: center; gap: 5px;

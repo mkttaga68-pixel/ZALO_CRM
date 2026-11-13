@@ -1,0 +1,10 @@
+﻿{
+    "migration":  "20261101180000_native_ai_qc_monitoring_mock",
+    "sha256":  "2fc062c3677377cb1c5c828583eec4be6a6be51040e3dc9e8f22d01616d2201c",
+    "tables":  [
+                   "native_ai_qc_monitoring_job",
+                   "native_ai_qc_monitoring_warning",
+                   "native_ai_qc_monitoring_delivery"
+               ],
+    "scope":  "APPROVED_SYNTHETIC_DATABASE_ONLY"
+}

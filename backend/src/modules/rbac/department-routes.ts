@@ -17,6 +17,7 @@ import {
 } from './department-service.js';
 import { userHasGrant } from './permission-group-service.js';
 import type { Resource, Action } from './permission-types.js';
+import { assertManageUser, withPermissionAuthority } from './permission-authority.js';
 
 /**
  * TEMP RBAC guard cho D5-6 (proper middleware ship ở D8).
@@ -112,11 +113,14 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
     if (!body.userId) return reply.status(400).send({ error: 'userId required' });
     const deptRole = body.deptRole ?? 'member';
     try {
-      await assignUserToDepartment({
+      await withPermissionAuthority(user.id,user.orgId,'user','edit',async(tx,authority)=>{
+        assertManageUser(authority,body.userId!);
+        await assignUserToDepartment({
         orgId: user.orgId,
         departmentId: id,
-        userId: body.userId,
+        userId: body.userId!,
         deptRole,
+        },tx);
       });
       return reply.send({ ok: true });
     } catch (e: any) {
@@ -125,7 +129,7 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
         const which = deptRole === 'leader' ? 'trưởng phòng' : deptRole === 'deputy' ? 'phó phòng' : 'thành viên';
         return reply.status(409).send({ error: `Phòng ban đã có ${which} — đổi role hoặc remove người cũ trước` });
       }
-      return reply.status(400).send({ error: e.message });
+      return reply.status(e.statusCode ?? 400).send({ error: e.message });
     }
   });
 
@@ -136,10 +140,13 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
     // FIX codex review #6: validate user thuộc đúng dept :id trước khi remove
     const { id: deptId, userId } = request.params as { id: string; userId: string };
     try {
-      await removeUserFromDepartment(user.orgId, userId, deptId);
+      await withPermissionAuthority(user.id,user.orgId,'user','edit',async(tx,authority)=>{
+        assertManageUser(authority,userId);
+        await removeUserFromDepartment(user.orgId,userId,deptId,tx);
+      });
       return reply.send({ ok: true });
     } catch (e: any) {
-      return reply.status(400).send({ error: e.message });
+      return reply.status(e.statusCode ?? 400).send({ error: e.message });
     }
   });
 

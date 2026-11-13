@@ -1,0 +1,16 @@
+import fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';import {createRequire} from 'node:module';
+import {digest,effectiveKnowledgeVersions,KnowledgeRetrievalService} from '../backend/dist/modules/ai-quality-control/knowledge.js';
+const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),root=path.resolve(repo,'..','native-ai-qc-runtime/mvxj0im3'),out=path.join(repo,'evidence/ollama-semantic-v2-20261102');
+const fixture=JSON.parse(fs.readFileSync(path.resolve(repo,'..','aiqc-browser-e2e-20261101/fixtures.json'),'utf8')),runtime=JSON.parse(fs.readFileSync(path.join(root,'runtime-evidence.json'),'utf8'));
+if(!runtime.syntheticOnly||runtime.ports.database!==59941)throw Error('SANDBOX_PROOF_REQUIRED');
+const password=fs.readFileSync(path.join(root,'postgres-password.synthetic'),'utf8');if(!/^[a-f0-9]{48}$/.test(password))throw Error('CREDENTIAL_FORMAT');
+const {Client}=createRequire(path.join(repo,'backend/package.json'))('pg'),client=new Client({connectionString:`postgresql://ai_qc_sandbox:${password}@127.0.0.1:59941/ai_qc_sandbox_knowledge_mvxj0im3`,connectionTimeoutMillis:3000});
+try{await client.connect();const proof=(await client.query("SELECT current_database() AS name,current_setting('data_directory') AS directory")).rows[0];if(proof.name!=='ai_qc_sandbox_knowledge_mvxj0im3'||path.resolve(proof.directory).toLowerCase()!==path.join(root,'postgres-data').toLowerCase())throw Error('IDENTITY_MISMATCH');
+ const state=(await client.query('SELECT payload FROM native_ai_qc_workspace WHERE organization_id=$1',[fixture.orgId])).rows[0].payload;
+ const actor={id:fixture.owner.id,orgId:fixture.orgId,departmentIds:[],permissions:['access','create','edit','approve','view_all']};
+ const documents=state.documents.filter(d=>d.synthetic),approved=state.documents.filter(d=>d.status==='APPROVED'),active=effectiveKnowledgeVersions(actor,state).filter(d=>d.status==='APPROVED');
+ const slaValues=[...new Set(active.map(d=>d.rule?.slaSeconds).filter(n=>typeof n==='number'))];
+ const report={at:new Date().toISOString(),sandbox:true,orgId:fixture.orgId,totalDocuments:state.documents.length,documentsNotMarkedSynthetic:state.documents.length-documents.length,approvedCount:approved.length,approvedDocuments:approved,active:active.map(d=>({documentId:d.documentId,revision:d.revision,hash:d.contentHash,hashValid:digest(d.markdown)===d.contentHash,tenantMatches:d.orgId===fixture.orgId,rule:d.rule})),slaValues,conflicts:slaValues.length>1?['MULTIPLE_APPROVED_SLA_VALUES_REQUIRE_SCOPE_REVIEW']:[],sameTypeOverlapCandidates:Object.fromEntries(['INSULT','COURTESY','UNRESOLVED_REQUEST','KNOWLEDGE_MISMATCH'].map(t=>[t,active.filter(d=>d.rule?.type===t).map(d=>d.documentId)])),writes:false};
+ try{const retrieval=new KnowledgeRetrievalService().retrieve(actor,state,'SYNTHETIC-A',true);report.retrieved= retrieval.documents.map(d=>({documentId:d.documentId,revision:d.revision,hash:d.contentHash}));}catch(e){report.retrievalError=e.code??e.name;}
+ fs.writeFileSync(path.join(out,'sandbox-rule-audit.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({approved:approved.length,active:active.length,slaValues,conflicts:report.conflicts,writes:false}));
+}finally{await client.end();}

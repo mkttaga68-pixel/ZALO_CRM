@@ -1,0 +1,15 @@
+# REVIEW ONLY. NOT APPLIED. Requires valid secret, Platform hard limit, synthetic success and maintenance approval.
+services:
+  app:
+    image: zl-crm-app@sha256:7d7fa0a5ddf0fd82debfdea7972f94520e78b0acf0134b8381bb33ac1d7118b2
+    pull_policy: never
+    environment:
+      AI_QC_ENABLED: "true"
+      AI_QC_STORAGE: application
+      AI_QC_MANUAL_REAL_TEST_ENABLED: "${AI_QC_MANUAL_REAL_TEST_APPROVED:?Owner manual-real-test activation required}"
+      AI_QC_MANUAL_RETENTION_ENABLED: "true"
+      AI_QC_REAL_API_ENABLED: "${AI_QC_MANUAL_REAL_TEST_APPROVED:?Owner manual-real-test activation required}"
+      AI_QC_OUTBOUND_TEST_APPROVED: "${AI_QC_MANUAL_REAL_TEST_APPROVED:?Owner manual-real-test activation required}"
+      AI_QC_REAL_DATA_ENABLED: "${AI_QC_MANUAL_REAL_TEST_APPROVED:?Owner manual-real-test activation required}"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "${AI_QC_MANUAL_REAL_TEST_APPROVED:?Owner manual-real-test activation required}"
+      AI_QC_AUTO_MONITOR_ENABLED: "false"

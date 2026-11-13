@@ -11,6 +11,7 @@ import { applyContactAggregateFromMessage, applyContactInteraction, applyFriendA
 import { onInboundMessage as onInboundScoring, onOutboundMessage as onOutboundScoring } from '../scoring/scoring-hooks.js';
 import { syncReminderFromMessage } from '../contacts/reminder-sync.js';
 import { uploadBuffer, isOwnStorageUrl } from '../../shared/storage/index.js';
+import { downloadMediaBuffer } from '../../shared/utils/safe-media-download.js';
 
 export interface IncomingMessage {
   accountId: string;
@@ -131,13 +132,9 @@ function contentTypeToExtension(contentType: string): string {
 }
 
 async function mirrorRemoteMediaUrl(url: string, contentType: string): Promise<string | null> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  const mimeType = response.headers.get('content-type')?.split(';')[0] || guessMimeType(url, contentType);
+  const downloaded = await downloadMediaBuffer(url);
+  const buffer = downloaded.buffer;
+  const mimeType = downloaded.mimeType || guessMimeType(url, contentType);
   const uploaded = await uploadBuffer(buffer, mimeType, fileNameFromUrl(url, contentType, mimeType));
   return uploaded.url;
 }
@@ -169,8 +166,7 @@ async function mirrorInboundMediaContent(msg: IncomingMessage): Promise<string> 
     } catch (err) {
       logger.warn('[message-handler] inbound media mirror failed', {
         contentType: msg.contentType,
-        url: msg.content,
-        err: (err as Error).message,
+        errorType: err instanceof Error ? err.name : 'MediaDownloadError',
       });
       return msg.content;
     }
@@ -189,8 +185,7 @@ async function mirrorInboundMediaContent(msg: IncomingMessage): Promise<string> 
       logger.warn('[message-handler] inbound media mirror failed', {
         contentType: msg.contentType,
         field,
-        url: value,
-        err: (err as Error).message,
+        errorType: err instanceof Error ? err.name : 'MediaDownloadError',
       });
     }
   }
@@ -209,8 +204,7 @@ async function mirrorInboundMediaContent(msg: IncomingMessage): Promise<string> 
         logger.warn('[message-handler] inbound media params mirror failed', {
           contentType: msg.contentType,
           field,
-          url: value,
-          err: (err as Error).message,
+          errorType: err instanceof Error ? err.name : 'MediaDownloadError',
         });
       }
     }

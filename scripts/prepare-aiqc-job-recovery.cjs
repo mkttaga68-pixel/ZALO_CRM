@@ -1,0 +1,24 @@
+// Package only the new job endpoints over the captured running API. No deployment/database writes.
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const repo=path.resolve(__dirname,'..'),root=path.join(repo,'evidence','aiqc-job-recovery-20261113');
+const context=path.join(root,'image-context'),patch=path.join(context,'patch','modules','ai-quality-control');
+const baseImage='zl-crm-app:aiqc-library-ui-20261112';
+const baseId='sha256:4c4303f2855d4ffcdadb233196ba1ee8ab587cc48db483d2ff37918da5fbddc1';
+fs.mkdirSync(patch,{recursive:true});
+let running=fs.readFileSync(path.join(root,'running-routes.js'),'utf8');
+const compiled=fs.readFileSync(path.join(root,'compiled','modules','ai-quality-control','routes.js'),'utf8');
+const importLine=compiled.split('\n').find(l=>l.startsWith('import { registerDepartmentJobRoutes }'));
+const registerLine=compiled.split('\n').find(l=>l.includes('await registerDepartmentJobRoutes('));
+const anchor=running.split('\n').find(l=>l.includes('await registerDepartmentObservations('));
+if(!importLine||!registerLine||!anchor||running.includes('registerDepartmentJobRoutes'))throw Error('RUNNING_ROUTE_ANCHOR_INVALID');
+const observationImport="import { registerDepartmentObservations } from './department-observations.js';";
+if(!running.includes(observationImport))throw Error('RUNNING_IMPORT_ANCHOR_INVALID');
+running=running.replace(observationImport,observationImport+'\n'+importLine).replace(anchor,anchor+'\n'+registerLine);
+fs.writeFileSync(path.join(patch,'routes.js'),running);
+fs.copyFileSync(path.join(root,'compiled','modules','ai-quality-control','department-job-routes.js'),path.join(patch,'department-job-routes.js'));
+const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+const files=['routes.js','department-job-routes.js'].map(file=>({file,sha256:sha(fs.readFileSync(path.join(patch,file)))}));
+const manifest={baseImage,baseId,files,frontend:'Source changes verified separately; not replaced in this backend-only image.',schemaChanges:false,changesToBudget:false,automaticRetriesStarted:0,unrelatedLearningChangesIncluded:false};
+fs.writeFileSync(path.join(context,'manifest.json'),JSON.stringify(manifest,null,2));
+fs.writeFileSync(path.join(context,'Dockerfile'),`FROM ${baseImage}\nCOPY patch/ /app/dist/\nCOPY manifest.json /app/aiqc-job-recovery-manifest.json\n`);
+console.log(JSON.stringify({context,baseImage,baseId,files,deployStarted:false}));

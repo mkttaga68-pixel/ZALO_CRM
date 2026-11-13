@@ -1,0 +1,5 @@
+const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
+const repo=path.resolve(__dirname,'..'),evidence=path.resolve(repo,'..','aiqc-monitoring-test-evidence-20261101');fs.mkdirSync(evidence,{recursive:true});
+const env={};for(const k of ['SystemRoot','WINDIR','ComSpec','PATH','Path','PATHEXT','NUMBER_OF_PROCESSORS'])if(process.env[k])env[k]=process.env[k];
+Object.assign(env,{NODE_ENV:'test',QC_TEST_ROOT:evidence,TEMP:evidence,TMP:evidence,AI_QC_AUTO_MONITOR_ENABLED:'true',AI_QC_AUTO_MONITOR_SYNTHETIC_ONLY:'true',AI_QC_REAL_API_ENABLED:'false',AI_QC_REAL_DATA_ENABLED:'false',AI_QC_OUTBOUND_TEST_APPROVED:'false',AI_QC_REAL_DATA_OUTBOUND_APPROVED:'false'});
+const r=spawnSync(process.execPath,[path.join(__dirname,'verify-native-ai-qc-monitoring-sandbox.mjs')],{cwd:evidence,env,encoding:'utf8',windowsHide:true,timeout:45000});fs.writeFileSync(path.join(evidence,'monitoring-integration.log'),String(r.stdout||'')+String(r.stderr||''));if(r.status!==0){console.error('MONITORING_INTEGRATION_FAILED; inspect isolated evidence log');process.exitCode=1;}else console.log(r.stdout);

@@ -1,0 +1,17 @@
+# Preparation only. NOT applied to production by the sandbox verification.
+# Replace REPLACE_WITH_ORGANIZATION_ID with the explicitly authorized tenant.
+# Review the resolved configuration before applying to the existing app service.
+services:
+  app:
+    volumes:
+      - type: bind
+        source: C:/Users/ADMIN/Downloads/ZALO_CRM_AI_BRAIN
+        target: /knowledge/obsidian
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      AI_QC_VAULT_ROOTS_BY_TENANT: '{"REPLACE_WITH_ORGANIZATION_ID":["/knowledge/obsidian"]}'
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"

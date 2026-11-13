@@ -7,6 +7,7 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { requireGrant } from '../rbac/rbac-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
+import { postingAccounts } from './manual-posting/access.js';
 
 export async function groupPostLogRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
@@ -20,8 +21,9 @@ export async function groupPostLogRoutes(app: FastifyInstance): Promise<void> {
       const page = Math.max(1, parseInt(q.page || '1') || 1);
       const limit = Math.min(100, Math.max(1, parseInt(q.limit || '30') || 30));
 
-      const where: any = { orgId: user.orgId };
-      if (q.accountId) where.zaloAccountId = q.accountId;
+      const accounts = (await postingAccounts(user)).map(a => a.id);
+      if (q.accountId && !accounts.includes(q.accountId)) return reply.status(404).send({ error: 'Không tìm thấy tài khoản trong phạm vi truy cập' });
+      const where: any = { orgId: user.orgId, zaloAccountId: q.accountId ?? { in: accounts } };
       if (q.status && ['ok', 'partial', 'failed'].includes(q.status)) where.status = q.status;
 
       const [logs, total] = await Promise.all([

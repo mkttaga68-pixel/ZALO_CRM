@@ -1,0 +1,13 @@
+# REVIEW ONLY: merge last after the reviewed Obsidian closure overlay.
+# Owner requests AI QC on the EXISTING CRM origin (3080), using current CRM auth/RBAC.
+# No published ports, new backend, account migration or grant changes.
+services:
+  app:
+    environment:
+      AI_QC_ENABLED: "true"
+      AI_QC_STORAGE: application
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"
+      AI_QC_REAL_DATA_ENABLED: "false"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"
+      AI_QC_AUTO_MONITOR_ENABLED: "false"

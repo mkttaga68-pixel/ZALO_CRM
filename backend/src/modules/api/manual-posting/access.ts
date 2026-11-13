@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../../shared/database/prisma-client.js';
-import { assertActiveSession } from '../../auth/active-session.js';
+import { assertActiveActor } from '../../auth/active-session.js';
 import { userHasGrant } from '../../rbac/permission-group-service.js';
 import { PostingError, type PostingKind, type PostingTarget, type PostingViewer } from './contracts.js';
 
 export async function postingAccounts(viewer: PostingViewer) {
-  await assertActiveSession(viewer);
+  await assertActiveActor(viewer);
   // Re-read grants for every account/recipient check, including background jobs.
   if (!await userHasGrant(viewer.id, 'posting', 'access')) {
     throw new PostingError(403, 'Bạn chưa được cấp quyền Đăng bài (Đăng nhóm / Chào hàng).');

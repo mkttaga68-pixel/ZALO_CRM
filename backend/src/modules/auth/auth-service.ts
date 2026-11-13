@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { normalizePhone } from '../../shared/utils/phone.js';
+import { credentialVersion } from './credential-version.js';
 
 /**
  * Một chuỗi được coi là "có vẻ SĐT" khi bỏ hết ký tự không phải số vẫn còn
@@ -22,6 +23,7 @@ export interface JwtPayload {
   email: string;
   role: string;
   orgId: string;
+  credentialVersion: string;
 }
 
 // Check if any users exist — true means first-run setup is needed
@@ -67,6 +69,7 @@ export async function setup(
     email: result.user.email,
     role: result.user.role,
     orgId: result.org.id,
+    credentialVersion: credentialVersion(result.user.id, result.user.passwordHash),
   };
 }
 
@@ -105,7 +108,8 @@ export async function login(identifier: string, password: string): Promise<JwtPa
     throw unauthorized();
   }
 
-  return { id: user.id, email: user.email, role: user.role, orgId: user.orgId };
+  return { id: user.id, email: user.email, role: user.role, orgId: user.orgId,
+    credentialVersion: credentialVersion(user.id, user.passwordHash) };
 }
 
 // Return safe user profile (no password hash)

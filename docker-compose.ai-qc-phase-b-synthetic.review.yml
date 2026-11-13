@@ -1,0 +1,40 @@
+# REVIEW ONLY. Apply only after phase A and separate phase-B authorization/gates.
+# Synthetic-only: real CRM adapter/outbound/monitoring/manual paths stay OFF.
+services:
+  app:
+    image: ${AI_QC_PHASE_B_IMAGE:?Set the reviewed immutable phase-B image digest}
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        VITE_AI_QC_ENABLED: "true"
+    environment:
+      AI_QC_ENABLED: "true"
+      AI_QC_OLLAMA_ENABLED: "true"
+      AI_QC_STORAGE: application
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"
+      AI_QC_REAL_DATA_ENABLED: "false"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"
+      AI_QC_AUTO_MONITOR_ENABLED: "false"
+      AI_QC_MANUAL_REAL_TEST_ENABLED: "false"
+      AI_QC_MANUAL_RETENTION_ENABLED: "false"
+      AI_QC_OPENAI_REMOVED: "true"
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: qwen3:4b-instruct
+      AI_QC_RESOURCE_GUARD_REQUIRED: "true"
+      AI_QC_HOST_RESOURCE_FILE: /run/aiqc-runtime/host-resources.json
+      AI_QC_OLLAMA_KILL_SWITCH_FILE: /run/aiqc-runtime/STOP
+      AI_QC_VAULT_ROOTS_BY_TENANT: '{"a236afea-cc9c-4de8-81c0-ee5923385b2e":["/run/aiqc/obsidian"]}'
+    volumes:
+      - type: bind
+        source: C:/Users/ADMIN/Downloads/ZALO_CRM_AI_BRAIN
+        target: /run/aiqc/obsidian
+        read_only: true
+      # Dedicated telemetry/kill-switch folder ONLY. Never mount C:/ProgramData/ZaloCRM/AIQC itself:
+      # it holds production database dumps under backups/.
+      - type: bind
+        source: C:/ProgramData/ZaloCRM/AIQC/runtime
+        target: /run/aiqc-runtime
+        read_only: true

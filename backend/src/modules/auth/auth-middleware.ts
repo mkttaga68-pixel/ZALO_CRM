@@ -9,7 +9,7 @@ const validated = new WeakMap<FastifyRequest, string>();
 
 async function checkCurrentAccount(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const identity = request.user;
-  const key = JSON.stringify([identity?.id, identity?.orgId, identity?.role]);
+  const key = JSON.stringify([identity?.id, identity?.orgId, identity?.role, identity?.credentialVersion]);
   if (validated.get(request) === key) return;
   try {
     await assertActiveSession(identity);

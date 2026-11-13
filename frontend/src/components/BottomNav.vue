@@ -10,19 +10,22 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import { canAccessPath } from '@/router/access-policy';
 
 const route = useRoute();
 const router = useRouter();
 
-const tabs = [
+const auth = useAuthStore();
+const tabs = computed(() => [
   { title: 'Chat', icon: 'mdi-message-text-outline', path: '/chat' },
   { title: 'Khách hàng', icon: 'mdi-account-group-outline', path: '/contacts' },
   { title: 'Lịch hẹn', icon: 'mdi-calendar-clock-outline', path: '/appointments' },
   { title: 'Tổng quan', icon: 'mdi-view-dashboard-outline', path: '/' },
-];
+].filter(tab => canAccessPath(tab.path, auth.hasGrant)));
 
 const activeTab = computed(() => {
-  return tabs.find(t => t.path === route.path)?.path ?? '/chat';
+  return tabs.value.find(t => t.path === route.path)?.path ?? '';
 });
 
 function navigate(path: string) {

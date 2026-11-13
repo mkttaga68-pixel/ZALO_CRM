@@ -19,13 +19,23 @@ export type Action = (typeof ACTIONS)[number];
 
 // 17 resources trong ZaloCRM (map từ Getfly + thêm cụ thể cho Zalo domain)
 export const RESOURCES = [
+  'dashboard',
+  'appointment',
+  'report',
+  'analytics',
+  'automation',
+  'group',
+  'integration',
+  'ai_assistant',
   'department',         // Quản lý phòng ban
   'user',               // Quản lý người dùng
   'permission_group',   // Quản lý quyền
   'conversation',       // Hội thoại
   'contact',            // Khách hàng
+  'contact_data_purge', // Xóa dữ liệu khách hàng đã đồng bộ; chỉ admin/owner.
   'friend',             // Friends (Zalo per-account)
   'posting',            // Đăng bài: Đăng nhóm + Chào hàng
+  'ai_quality_control', // Native AI QC — independent from existing AI Assistant
   'bot_auto',           // Bot-Auto — công tắc tổng của cả module automation (tab 🤖)
   'customer_list',      // Tệp KH
   'broadcast',          // Chiến dịch
@@ -43,13 +53,23 @@ export type Resource = (typeof RESOURCES)[number];
 // Mỗi resource declare actions hợp lệ (subset của ACTIONS).
 // Vd Engagement không có "create/edit/delete" — chỉ computed.
 export const RESOURCE_ACTIONS: Record<Resource, readonly Action[]> = {
+  dashboard: ['access'],
+  appointment: ['access', 'create', 'edit', 'delete', 'view_all'],
+  report: ['access'],
+  analytics: ['access', 'create', 'edit', 'delete'],
+  automation: ['access', 'create', 'edit', 'delete'],
+  group: ['access', 'create', 'edit', 'delete'],
+  integration: ['access', 'create', 'edit', 'delete'],
+  ai_assistant: ['access'],
   department: ['access', 'create', 'edit', 'delete'],
   user: ['access', 'create', 'edit', 'delete'],
   permission_group: ['access', 'create', 'edit', 'delete'],
   conversation: ['access', 'edit', 'delete', 'view_all'],
   contact: ['access', 'create', 'edit', 'delete', 'view_all'],
+  contact_data_purge: ['access'],
   friend: ['access', 'create', 'edit', 'delete', 'view_all'],
   posting: ['access'],
+  ai_quality_control: ['access','create','edit','approve','delete','view_all'],
   // Bot-Auto là công tắc module, không phải entity → chỉ có 'access'.
   bot_auto: ['access'],
   customer_list: ['access', 'create', 'edit', 'delete', 'approve', 'view_all'],
@@ -109,6 +129,8 @@ export const BOT_AUTO_RESOURCES = (Object.keys(RESOURCE_MODULE) as Resource[]).f
  * module là tắt sạch, kể cả các ô con vẫn đang tick.
  */
 export function hasGrant(grants: GrantsJson, resource: Resource, action: Action): boolean {
+  if (!RESOURCE_ACTIONS[resource]?.includes(action)) return false;
+  if (grants?.[resource]?.access !== true) return false;
   if (grants?.[resource]?.[action] !== true) return false;
   const moduleResource = RESOURCE_MODULE[resource];
   if (moduleResource && grants?.[moduleResource]?.access !== true) return false;

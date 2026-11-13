@@ -14,7 +14,8 @@
 
       <v-spacer />
 
-      <NotificationBell />
+      <AiqcAlertBell v-if="aiqcAlertsEnabled" />
+      <NotificationBell v-if="canUseNotifications(authStore.hasGrant)" />
       <v-btn icon size="small" variant="text" @click="toggleTheme">
         <v-icon size="20">{{ isDark ? 'mdi-weather-sunny' : 'mdi-weather-night' }}</v-icon>
       </v-btn>
@@ -30,24 +31,27 @@
       </div>
     </v-main>
 
-    <DailyBriefFab />
+    <DailyBriefFab v-if="authStore.hasGrant('ai_assistant')" />
 
     <BottomNav />
   </v-app>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useTheme } from 'vuetify';
 import { useAuthStore } from '@/stores/auth';
 import { useRouter } from 'vue-router';
 import NotificationBell from '@/components/NotificationBell.vue';
+import AiqcAlertBell from '@/components/AiqcAlertBell.vue';
 import BottomNav from '@/components/BottomNav.vue';
 import DailyBriefFab from '@/components/ai/DailyBriefFab.vue';
 import OfflineIndicator from '@/components/OfflineIndicator.vue';
+import { canUseNotifications } from '@/router/access-policy';
 
 const theme = useTheme();
 const authStore = useAuthStore();
+const aiqcAlertsEnabled = computed(() => import.meta.env.VITE_AI_QC_ENABLED === 'true' && authStore.hasGrant('ai_quality_control', 'access'));
 const router = useRouter();
 const isDark = ref(localStorage.getItem('theme') !== 'light');
 

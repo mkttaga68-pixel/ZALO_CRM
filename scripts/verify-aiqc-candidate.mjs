@@ -1,0 +1,61 @@
+// Runs inside candidate image, network none. Only /tmp synthetic state is writable.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {createRequire} from 'node:module';
+import {MemoryWorkspaceRepository} from '/app/dist/modules/ai-quality-control/repository.js';
+import {KnowledgeApprovalService,KnowledgeRetrievalService,digest,verifyCitation} from '/app/dist/modules/ai-quality-control/knowledge.js';
+import {AIProviderService,providerEnvironment} from '/app/dist/modules/ai-quality-control/providers.js';
+import {ConversationAnalyzerService,EvidenceReviewService} from '/app/dist/modules/ai-quality-control/analysis.js';
+import {syntheticConversation} from '/app/dist/modules/ai-quality-control/synthetic.js';
+import {OpenAiControl,CONTROL_PROJECT} from '/app/dist/modules/ai-quality-control/openai-control.js';
+import {ObsidianKnowledgeService} from '/app/dist/modules/ai-quality-control/knowledge.js';
+import {aiQualityControlRoutes} from '/app/dist/modules/ai-quality-control/routes.js';
+
+const results=[];
+for(const k of ['AI_QC_ENABLED','AI_QC_REAL_API_ENABLED','AI_QC_REAL_DATA_ENABLED','AI_QC_REAL_DATA_OUTBOUND_APPROVED','AI_QC_OUTBOUND_TEST_APPROVED','AI_QC_AUTO_MONITOR_ENABLED'])assert.equal(process.env[k],'false');
+results.push('IMAGE_FLAGS_OFF');
+const manifest=JSON.parse(fs.readFileSync('/app/aiqc-candidate-manifest.json','utf8'));
+for(const f of manifest.files)assert.equal(createHash('sha256').update(fs.readFileSync(f.target)).digest('hex'),f.compiledSha256);
+results.push('IMAGE_COMPILED_HASHES');
+const init=spawnSync(process.execPath,['/app/scripts/initialize-aiqc-openai-control.cjs','--initialize-disabled','/tmp/cli-policy'],{encoding:'utf8'});assert.equal(init.status,0);assert.equal(JSON.parse(fs.readFileSync('/tmp/cli-policy/policy.json','utf8')).enabled,false);assert.equal(fs.readFileSync('/tmp/cli-policy/enabled','utf8'),'DISABLED');results.push('POLICY_INITIALIZES_DISABLED');
+const reset=spawnSync(process.execPath,['/app/scripts/initialize-aiqc-openai-control.cjs','--initialize-disabled','/tmp/cli-policy'],{encoding:'utf8'});assert.notEqual(reset.status,0);results.push('LEDGER_RESET_REFUSED');
+const repo=new MemoryWorkspaceRepository(),actor={id:'synthetic-reviewer',orgId:'synthetic-A',departmentIds:[],permissions:['access','create','edit','approve','view_all']};
+const approval=new KnowledgeApprovalService(repo),retrieval=new KnowledgeRetrievalService(),now=Date.now(),transition=now+86400000;
+const markdown='# SYNTHETIC ONLY\nDo not insult a customer. Không nói đồ ngu với khách.';
+const original={id:'synthetic-r1',documentId:'synthetic-policy',orgId:actor.orgId,sourcePath:'synthetic.md',revision:1,contentHash:digest(markdown),markdown,category:'SYNTHETIC',synthetic:true,stagedBy:actor.id,status:'DRAFT',approvedBy:null,approvedAt:null,effectiveFrom:null,effectiveTo:null,departmentIds:[],rule:null};
+await repo.mutate(actor.orgId,s=>s.documents.push(original));
+assert.equal(retrieval.retrieve(actor,await repo.read(actor.orgId),'đồ ngu',true).documents.length,0);results.push('DRAFT_EXCLUDED');
+const publication={hash:original.contentHash,effectiveFrom:new Date(now-2*86400000).toISOString(),effectiveTo:null,departmentIds:[],rule:{id:'synthetic-UX-001',type:'INSULT',matchTerms:['đồ ngu'],conflictGroup:null,slaSeconds:null,careIntervalDays:null}};
+await approval.publish(actor,original.id,publication);
+const old=structuredClone((await repo.read(actor.orgId)).documents[0]);
+const next={...original,id:'synthetic-r2',revision:2,markdown:markdown+'\nRevision two.',contentHash:digest(markdown+'\nRevision two.')};
+await repo.mutate(actor.orgId,s=>s.documents.push(next));await approval.publish(actor,next.id,{...publication,hash:next.contentHash,effectiveFrom:new Date(transition).toISOString()});
+assert.deepEqual((await repo.read(actor.orgId)).documents[0],old);results.push('OLD_REVISION_UNCHANGED');
+for(const [offset,revision]of [[-1,1],[0,2],[1,2]]){
+ const selected=retrieval.retrieve(actor,await repo.read(actor.orgId),'đồ ngu',true,new Date(transition+offset));assert.equal(selected.documents[0].revision,revision);results.push('TRANSITION_'+offset);
+}
+assert.equal((await repo.read(actor.orgId)).documents[1].status,'APPROVED');results.push('SCHEDULED_PUBLISHED');
+const selected=retrieval.retrieve(actor,await repo.read(actor.orgId),'đồ ngu',true,new Date(now));assert.equal(selected.documents[0].revision,1);assert.ok(verifyCitation(selected.documents[0],selected.chunks[0].citation));results.push('HISTORY_CITATION');
+assert.equal(retrieval.retrieve({...actor,orgId:'synthetic-B'},await repo.read(actor.orgId),'đồ ngu',true).documents.length,0);results.push('TENANT_ISOLATION');
+const env=providerEnvironment({AI_QC_ENABLED:'true',AI_QC_REAL_API_ENABLED:'false',AI_QC_REAL_DATA_ENABLED:'false'});
+const analyzer=new ConversationAnalyzerService(repo,new AIProviderService(env),env),run=await analyzer.analyze(actor,syntheticConversation(actor.orgId,'insult'));
+assert.equal(run.provider,'mock');assert.ok(run.knowledgeSnapshot.length>0);assert.ok(run.output.findings.some(f=>f.citations.length>0));results.push('MOCK_ANALYSIS_WITH_CITATION');
+await approval.revoke(actor,next.id,next.contentHash);assert.equal(retrieval.retrieve(actor,await repo.read(actor.orgId),'đồ ngu',true,new Date(transition+1)).documents[0].revision,1);results.push('REVOKED_SCHEDULE_CANCELLED');
+await approval.revoke(actor,original.id,original.contentHash);assert.equal(retrieval.retrieve(actor,await repo.read(actor.orgId),'đồ ngu',true).documents.length,0);results.push('REVOKED_EXCLUDED');
+const replay=await new EvidenceReviewService(repo).replay(actor,run.id);assert.equal(replay.hashMatches,true);assert.equal(replay.citationsValid,true);results.push('IMMUTABLE_SNAPSHOT_REPLAY');
+const require=createRequire('/app/package.json'),Fastify=require('fastify'),app=Fastify({logger:false});
+await app.register(aiQualityControlRoutes({repo,environment:env,vault:new ObsidianKnowledgeService(()=>['/tmp'],'/tmp'),syntheticVault:'/tmp',storageMode:'memory',authenticate:async(req,reply)=>{if(req.headers['x-synthetic-auth']!=='yes')return reply.code(401).send({error:'UNAUTHORIZED'});},actor:async req=>req.headers['x-synthetic-other']==='yes'?{...actor,orgId:'synthetic-B'}:actor,validateDepartments:async()=>{}}));
+assert.equal((await app.inject({url:'/api/v1/ai-quality-control/status'})).statusCode,401);results.push('IMAGE_HTTP_AUTH');
+assert.equal((await app.inject({url:'/api/v1/ai-quality-control/status',headers:{'x-synthetic-auth':'yes'}})).statusCode,200);results.push('IMAGE_HTTP_MODULE_STATUS');
+const otherWorkspace=await app.inject({url:'/api/v1/ai-quality-control/workspace',headers:{'x-synthetic-auth':'yes','x-synthetic-other':'yes'}});assert.equal(otherWorkspace.statusCode,200);assert.equal(otherWorkspace.json().documents.length,0);results.push('IMAGE_HTTP_TENANT_ISOLATION');await app.close();
+const root='/tmp/openai-control';fs.mkdirSync(root);
+fs.writeFileSync(root+'/policy.json',JSON.stringify({project:CONTROL_PROJECT,model:'gpt-6-luna',enabled:true,dailyUsd:2,monthlyUsd:30,maxConcurrent:1,requestsPerMinute:5,dailyTokenBudget:50000}));fs.writeFileSync(root+'/enabled','ALLOW_SYNTHETIC');fs.writeFileSync(root+'/ledger.json',JSON.stringify({version:1,project:CONTROL_PROJECT,blocked:false,entries:[]}));
+const child="import {OpenAiControl} from '/app/dist/modules/ai-quality-control/openai-control.js';const g=new OpenAiControl('/tmp/openai-control');const id=g.reserve(1,256);g.finish(id,{input_tokens:1,output_tokens:1});";
+for(let i=0;i<2;i++){const p=spawnSync(process.execPath,['--input-type=module','-e',child],{encoding:'utf8'});assert.equal(p.status,0,p.stderr);}
+assert.equal(JSON.parse(fs.readFileSync(root+'/ledger.json','utf8')).entries.length,2);results.push('DURABLE_SPEND_ACROSS_PROCESSES');
+const open=spawnSync(process.execPath,['--input-type=module','-e',"import {OpenAiControl} from '/app/dist/modules/ai-quality-control/openai-control.js';new OpenAiControl('/tmp/openai-control').reserve(1,256);"],{encoding:'utf8'});assert.equal(open.status,0);
+const restart=spawnSync(process.execPath,['--input-type=module','-e',child],{encoding:'utf8'});assert.notEqual(restart.status,0);assert.match(restart.stderr,/CONCURRENCY/);results.push('CRASHED_PROCESS_RESERVATION_FAILS_CLOSED');
+fs.writeFileSync(root+'/enabled','DISABLED');assert.throws(()=>new OpenAiControl(root).reserve(1,256),/DISABLED/);results.push('KILL_SWITCH_NO_RESTART');
+console.log(JSON.stringify({passed:results.length,results,realApiRequests:0,databaseAccess:false,productionVaultAccess:false,network:'none',evidence:'candidate compiled code, synthetic memory workspace and tmpfs only'}));

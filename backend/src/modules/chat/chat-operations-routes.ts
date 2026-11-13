@@ -13,7 +13,9 @@ import { authMiddleware } from '../auth/auth-middleware.js';
 import { requireZaloAccess } from '../zalo/zalo-access-middleware.js';
 import { zaloOps, ZaloOpError } from '../../shared/zalo-operations.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
-import { downloadCandidates } from '../../shared/storage/index.js';
+import { downloadMediaBuffer } from '../../shared/utils/safe-media-download.js';
+import { buildPrivacyContext } from '../privacy/redact.js';
+import { canForwardConversation } from './forward-access.js';
 import { socketIdentity } from '../../shared/socket-auth.js';
 import { eventBuffer } from '../../shared/event-buffer.js';
 import { logger } from '../../shared/utils/logger.js';
@@ -201,23 +203,17 @@ function extensionForContentType(contentType: string): string {
 }
 
 async function downloadMediaToTemp(media: { url: string; filename?: string }, contentType: string): Promise<{ path: string; cleanup: () => Promise<void> }> {
-  let lastError: unknown;
-  for (const url of downloadCandidates(media.url)) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.length === 0) throw new Error('empty response');
-
-      const dir = await mkdtemp(path.join(tmpdir(), 'zalocrm-forward-'));
-      const filePath = path.join(dir, filenameFromUrl(url, contentType, media.filename));
-      await writeFile(filePath, buffer);
-      return { path: filePath, cleanup: () => rm(dir, { recursive: true, force: true }) };
-    } catch (err) {
-      lastError = err;
-    }
+  const { buffer } = await downloadMediaBuffer(media.url);
+  const dir = await mkdtemp(path.join(tmpdir(), 'zalocrm-forward-'));
+  const cleanup = () => rm(dir, { recursive: true, force: true });
+  try {
+    const filePath = path.join(dir, filenameFromUrl(media.url, contentType, media.filename));
+    await writeFile(filePath, buffer);
+    return { path: filePath, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
   }
-  throw new Error(`Không tải được file media để chuyển tiếp: ${(lastError as Error)?.message ?? String(lastError)}`);
 }
 
 function handleError(err: unknown, reply: FastifyReply) {
@@ -490,25 +486,31 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const { msgId, targetConversationIds } = request.body as { msgId: string; targetConversationIds: string[] };
 
-    if (!msgId || !targetConversationIds?.length) {
-      return reply.status(400).send({ error: 'msgId and targetConversationIds required' });
+    if (typeof msgId !== 'string' || !msgId || !Array.isArray(targetConversationIds) || !targetConversationIds.length ||
+      targetConversationIds.length > 50 || targetConversationIds.some(value => typeof value !== 'string' || !value || value.length > 128)) {
+      return reply.status(400).send({ error: 'Cần mã tin và từ 1 đến 50 hội thoại đích hợp lệ' });
     }
 
     const conv = await getConversation(id, user.orgId, reply);
     if (!conv) return;
 
-    const refs = await resolveMessageRefs(id, msgId, user.orgId);
-    if (!refs) return reply.status(404).send({ error: 'Message not found' });
-
     try {
+      const privacy = await buildPrivacyContext(request);
+      if (!await canForwardConversation(app, request, conv, privacy)) return reply.status(404).send({ error: 'Conversation not found' });
+      const refs = await resolveMessageRefs(id, msgId, user.orgId);
+      if (!refs) return reply.status(404).send({ error: 'Message not found' });
       const targets = await prisma.conversation.findMany({
         where: { id: { in: targetConversationIds }, orgId: user.orgId },
         include: { zaloAccount: true },
       });
 
       const validTargets = targets.filter((t) => Boolean(t.externalThreadId));
-      if (validTargets.length === 0) {
-        return reply.status(400).send({ error: 'Không có hội thoại đích hợp lệ để chuyển tiếp' });
+      if (validTargets.length !== new Set(targetConversationIds).size) {
+        return reply.status(404).send({ error: 'Có hội thoại đích không hợp lệ hoặc ngoài quyền truy cập' });
+      }
+      // Validate every destination before any send, including a mixed allowed/denied request.
+      for (const target of validTargets) if (!await canForwardConversation(app, request, target, privacy)) {
+        return reply.status(404).send({ error: 'Có hội thoại đích không hợp lệ hoặc ngoài quyền truy cập' });
       }
 
       type FwdResp = { success?: unknown[]; fail?: unknown[] };
@@ -517,6 +519,10 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
       const io = (app as any).io as Server;
 
       if (['text', 'rich'].includes(refs.contentType)) {
+        // Native reference forwarding uses source-account message identifiers.
+        if (validTargets.some(t => t.zaloAccountId !== conv.zaloAccountId)) {
+          return reply.status(400).send({ error: 'Chuyển tiếp văn bản giữ tham chiếu cần chọn hội thoại cùng nick nguồn' });
+        }
         let textToForward = refs.content?.trim() || '';
         if (textToForward.startsWith('{')) {
           try {

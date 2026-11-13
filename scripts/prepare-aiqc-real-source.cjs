@@ -1,0 +1,12 @@
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const repo=path.resolve(__dirname,'..'),root=path.join(repo,'evidence/aiqc-real-source-20261113/image-context');
+const patch=path.join(root,'patch/modules/ai-quality-control');fs.mkdirSync(patch,{recursive:true});
+let source=fs.readFileSync(path.join(repo,'evidence/aiqc-job-recovery-20261113/running-knowledge.js'),'utf8');
+const anchor="                if (entry.name.startsWith('.'))\n                    continue;";
+if(source.split(anchor).length!==2||source.includes("entry.name === '09_BO_TEST_AI'"))throw Error('UNEXPECTED_RUNNING_KNOWLEDGE');
+source=source.replace(anchor,anchor+"\n                // Sample test suites are not company policy in the real vault.\n                if (!synthetic && depth === 0 && entry.name === '09_BO_TEST_AI')\n                    continue;");
+fs.writeFileSync(path.join(patch,'knowledge.js'),source);
+const manifest={baseImage:'zl-crm-app:aiqc-job-recovery-20261113',baseId:'sha256:735d08c9cf5f6512c5473aebd93b7826b9d037841e86240108ca866b8007414c',files:[{file:'knowledge.js',sha256:crypto.createHash('sha256').update(source).digest('hex')}],change:'Skip root 09_BO_TEST_AI when scanning a real knowledge vault; synthetic fixture vaults are unchanged.',otherSourceChangesIncluded:false};
+fs.writeFileSync(path.join(root,'manifest.json'),JSON.stringify(manifest,null,2));
+fs.writeFileSync(path.join(root,'Dockerfile'),'FROM zl-crm-app:aiqc-job-recovery-20261113\nCOPY patch/ /app/dist/\nCOPY manifest.json /app/aiqc-real-source-manifest.json\n');
+console.log(JSON.stringify(manifest));

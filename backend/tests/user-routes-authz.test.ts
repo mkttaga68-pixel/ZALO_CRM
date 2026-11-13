@@ -17,16 +17,38 @@ vi.mock('../src/modules/auth/auth-middleware.js', () => ({
 
 const userUpdateMock = vi.fn();
 const userCreateMock = vi.fn();
+const userFindFirstMock = vi.fn();
 
-vi.mock('../src/shared/database/prisma-client.js', () => ({
-  prisma: {
-    user: {
-      findMany: vi.fn().mockResolvedValue([]),
-      update: userUpdateMock,
-      create: userCreateMock,
+// Strict-RBAC authority (permission-authority.ts) reads the org's users/groups inside a
+// serializable transaction behind an advisory lock. The fixture models that data; the real
+// authority checks (grant, strictly-above, new-role ceiling) still run unmodified.
+const authorityUsers = [
+  { id: 'owner-1', orgId: 'org-1', role: 'owner', isActive: true, permissionGroupId: null },
+  { id: 'admin-1', orgId: 'org-1', role: 'admin', isActive: true, permissionGroupId: 'g-admin' },
+  { id: 'me-1', orgId: 'org-1', role: 'member', isActive: true, permissionGroupId: null },
+  { id: 'target-1', orgId: 'org-1', role: 'member', isActive: true, permissionGroupId: null },
+];
+const adminGroupGrants = { current: { user: { access: true, create: true, edit: true } } as Record<string, Record<string, boolean>> };
+const authorityLockMock = vi.fn().mockResolvedValue([{ locked: 1 }]);
+const transactionOptions: unknown[] = [];
+
+vi.mock('../src/shared/database/prisma-client.js', () => {
+  const user = {
+    findMany: vi.fn(async () => authorityUsers),
+    findFirst: userFindFirstMock,
+    update: userUpdateMock,
+    create: userCreateMock,
+  };
+  const permissionGroup = { findMany: vi.fn(async () => [{ id: 'g-admin', parentId: null, grants: adminGroupGrants.current, archivedAt: null }]) };
+  const tx = { user, permissionGroup, $queryRawUnsafe: authorityLockMock };
+  return {
+    prisma: {
+      user,
+      permissionGroup,
+      $transaction: vi.fn(async (fn: (client: typeof tx) => unknown, options?: unknown) => { transactionOptions.push(options); return fn(tx); }),
     },
-  },
-}));
+  };
+});
 
 const { userRoutes } = await import('../src/modules/auth/user-routes.js');
 const { Prisma } = await import('@prisma/client');
@@ -50,10 +72,43 @@ describe('PUT /api/v1/users/:id — field allowlist', () => {
   beforeEach(() => {
     userUpdateMock.mockReset();
     userCreateMock.mockReset();
+    userFindFirstMock.mockReset().mockResolvedValue({ role: 'member' });
     userUpdateMock.mockImplementation(({ data }) =>
       Promise.resolve({ id: 'target', email: 't@x', fullName: 'T', role: 'member', isActive: true, teamId: null, ...data }),
     );
     currentUser = { id: 'me-1', orgId: 'org-1', role: 'member', email: 'me@x' };
+    adminGroupGrants.current = { user: { access: true, create: true, edit: true } };
+    authorityLockMock.mockClear();
+    transactionOptions.length = 0;
+  });
+
+  it('admin edit runs under the RBAC advisory lock in a serializable transaction', async () => {
+    currentUser = { id: 'admin-1', orgId: 'org-1', role: 'admin', email: 'a@x' };
+    const app = await buildApp();
+    const res = await app.inject({ method: 'PUT', url: '/api/v1/users/target-1', payload: { email: 'new@x' } });
+    expect(res.statusCode).toBe(200);
+    expect(authorityLockMock).toHaveBeenCalledWith(expect.stringContaining('pg_advisory_xact_lock'), 'rbac-authority:org-1');
+    expect(transactionOptions).toEqual([{ isolationLevel: 'Serializable' }]);
+    await app.close();
+  });
+
+  it('admin without the user.edit grant is rejected and nothing is written', async () => {
+    currentUser = { id: 'admin-1', orgId: 'org-1', role: 'admin', email: 'a@x' };
+    adminGroupGrants.current = { user: { access: true, create: true, edit: false } };
+    const app = await buildApp();
+    const res = await app.inject({ method: 'PUT', url: '/api/v1/users/target-1', payload: { email: 'new@x' } });
+    expect(res.statusCode).toBe(403);
+    expect(userUpdateMock).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('admin cannot edit a peer or a superior (strictly-above rule)', async () => {
+    currentUser = { id: 'admin-1', orgId: 'org-1', role: 'admin', email: 'a@x' };
+    const app = await buildApp();
+    const res = await app.inject({ method: 'PUT', url: '/api/v1/users/owner-1', payload: { email: 'new@x' } });
+    expect(res.statusCode).toBe(403);
+    expect(userUpdateMock).not.toHaveBeenCalled();
+    await app.close();
   });
 
   it('member can update own fullName', async () => {

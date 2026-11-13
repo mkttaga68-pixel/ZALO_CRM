@@ -2,10 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const db = vi.hoisted(() => ({ findUnique: vi.fn() }));
 vi.mock('../src/shared/database/prisma-client.js', () => ({ prisma: { user: db } }));
 vi.mock('../src/shared/utils/logger.js', () => ({ logger: { warn: vi.fn() } }));
+vi.mock('../src/config/index.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/config/index.js')>();
+  return { ...actual, config: { ...actual.config, jwtSecret: 'synthetic-session-test-key-not-production' } };
+});
+import { credentialVersion } from '../src/modules/auth/credential-version.js';
 import { registerSocketAuth } from '../src/shared/socket-auth.js';
 import { revokeUserSockets } from '../src/shared/socket-revocation.js';
-const claims = { id: 'fixture-user', orgId: 'fixture-org', role: 'admin' };
-beforeEach(() => { vi.clearAllMocks(); db.findUnique.mockResolvedValue({ ...claims, isActive: true }); });
+const claims = { id: 'fixture-user', orgId: 'fixture-org', role: 'admin',
+  credentialVersion: credentialVersion('fixture-user', 'synthetic-socket-password-hash') };
+beforeEach(() => { vi.clearAllMocks(); db.findUnique.mockResolvedValue({ ...claims, isActive: true, passwordHash: 'synthetic-socket-password-hash' }); });
 function fixture() {
   let middleware: any, packet: any;
   const socket = { id: 'fixture-socket', handshake: { auth: { token: 'synthetic-token' }, headers: {} }, data: {},

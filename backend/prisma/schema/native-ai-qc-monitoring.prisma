@@ -1,0 +1,22 @@
+// Sandbox-only change set. Migration application needs separate owner approval.
+model NativeAiQcMonitoringJob {
+ organizationId String @map("organization_id")
+ id String
+ payload Json
+ @@id([organizationId, id])
+ @@map("native_ai_qc_monitoring_job")
+}
+model NativeAiQcMonitoringWarning {
+ organizationId String @map("organization_id")
+ id String
+ payload Json
+ @@id([organizationId, id])
+ @@map("native_ai_qc_monitoring_warning")
+}
+model NativeAiQcMonitoringDelivery {
+ organizationId String @map("organization_id")
+ id String
+ payload Json
+ @@id([organizationId, id])
+ @@map("native_ai_qc_monitoring_delivery")
+}

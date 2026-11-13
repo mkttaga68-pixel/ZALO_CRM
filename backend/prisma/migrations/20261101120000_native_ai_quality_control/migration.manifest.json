@@ -1,0 +1,8 @@
+{
+  "migration": "20261101120000_native_ai_quality_control",
+  "tables": [
+    "native_ai_qc_workspace"
+  ],
+  "sha256": "5acffb29dc21b9974f29515be4faad12e23b62cae20f953376c4509ee1414fbc",
+  "scope": "Additive native QC workspace only; no old Sprint migrations"
+}

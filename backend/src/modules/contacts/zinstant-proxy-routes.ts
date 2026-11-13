@@ -12,6 +12,8 @@ import { logger } from '../../shared/utils/logger.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
+import { assertSafeOutboundUrl } from '../../shared/utils/ssrf-guard.js';
+import { safeOutboundFetch } from '../../shared/utils/safe-outbound-fetch.js';
 
 // Public routes (no auth) — bankcard parser is hit from Zalo iframe context
 // where cookies don't reliably forward, and sticker assets are read-only CDN
@@ -112,15 +114,15 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
     if (!url) return reply.status(400).send({ error: 'url query required' });
 
     let parsed: URL;
-    try { parsed = new URL(url); } catch { return reply.status(400).send({ error: 'invalid url' }); }
-    if (!ALLOWED_HOSTS.has(parsed.hostname)) {
+    try { parsed = assertSafeOutboundUrl(url); } catch { return reply.status(400).send({ error: 'invalid public HTTPS url' }); }
+    if (!ALLOWED_HOSTS.has(parsed.hostname) || parsed.port && parsed.port !== '443') {
       return reply.status(403).send({ error: 'host not allowed' });
     }
 
     try {
-      const res = await fetch(parsed.toString(), {
+      const res = await safeOutboundFetch(parsed.toString(), {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ZaloCRM/1.0)' },
-        signal: AbortSignal.timeout(8000),
+        timeoutMs: 8000, maxBytes: 1024 * 1024,
       });
       if (!res.ok) return reply.status(res.status).send({ error: 'upstream error' });
       const body = await res.text();
@@ -158,7 +160,7 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
         .header('Cache-Control', 'public, max-age=3600')
         .send(data);
     } catch (err) {
-      logger.warn('[bankcard-proxy] fetch error:', err);
+      logger.warn('[bankcard-proxy] fetch rejected', { errorType: err instanceof Error ? err.name : 'DownloadError' });
       return reply.status(502).send({ error: 'upstream fetch failed' });
     }
   });

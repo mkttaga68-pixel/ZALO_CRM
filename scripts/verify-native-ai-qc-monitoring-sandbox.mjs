@@ -1,0 +1,63 @@
+// Programmatic PG + real Socket.IO integration. Not browser E2E or an app deployment.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import http from 'node:http';
+import net from 'node:net';
+import tls from 'node:tls';
+import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
+import {PostgresMonitoringRepository} from '../backend/dist/modules/ai-quality-control/monitoring/repository.js';
+import {PrismaWorkspaceRepository} from '../backend/dist/modules/ai-quality-control/repository.js';
+import {ObsidianKnowledgeService,KnowledgeApprovalService} from '../backend/dist/modules/ai-quality-control/knowledge.js';
+import {SyntheticMessageAdapter} from '../backend/dist/modules/ai-quality-control/monitoring/synthetic-message-adapter.js';
+import {MonitoringQueue} from '../backend/dist/modules/ai-quality-control/monitoring/queue.js';
+import {MonitoringWorker} from '../backend/dist/modules/ai-quality-control/monitoring/worker.js';
+import {MonitoringNotifications} from '../backend/dist/modules/ai-quality-control/monitoring/notification-outbox.js';
+import {monitoringSettings} from '../backend/dist/modules/ai-quality-control/monitoring/settings.js';
+import {syntheticConversation} from '../backend/dist/modules/ai-quality-control/synthetic.js';
+import {warningEvidenceValid} from '../backend/dist/modules/ai-quality-control/monitoring/warning-engine.js';
+const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),require=createRequire(path.join(repo,'backend/package.json'));
+const {Pool}=require('pg'),{PrismaClient}=require('@prisma/client'),{PrismaPg}=require('@prisma/adapter-pg'),{Server}=require('socket.io');
+const connectSocket=createRequire(path.join(repo,'frontend/package.json'))('socket.io-client').io;
+if(process.env.NODE_ENV!=='test'||!process.env.QC_TEST_ROOT||process.env.OPENAI_API_KEY||process.env.AI_QC_REAL_API_ENABLED!=='false'||process.env.AI_QC_REAL_DATA_ENABLED!=='false')throw Error('Use scrubbed integration runner');
+const root=path.resolve(repo,'..','native-ai-qc-runtime','mvxj0im3'),state=JSON.parse(fs.readFileSync(path.join(root,'runtime-evidence.json'),'utf8')),name='ai_qc_sandbox_knowledge_mvxj0im3';
+assert.equal(state.syntheticOnly,true);assert.equal(state.ports.database,59941);assert.ok(state.databaseNames.includes(name));
+const password=fs.readFileSync(path.join(root,'postgres-password.synthetic'),'utf8');assert.match(password,/^[a-f0-9]{48}$/);
+const allowedPorts=new Set([59941]),connect=net.Socket.prototype.connect;let denied=0;
+net.Socket.prototype.connect=function(...args){const raw=Array.isArray(args[0])?args[0]:args,first=raw[0];const options=typeof first==='object'?first:{port:first,host:raw[1]};if(!['127.0.0.1','localhost'].includes(options.host)||!allowedPorts.has(Number(options.port))){denied++;throw Error('MONITORING_NETWORK_DENIED');}return connect.apply(this,args);};
+globalThis.fetch=()=>{denied++;throw Error('MONITORING_OUTBOUND_DENIED');};tls.connect=()=>{denied++;throw Error('MONITORING_TLS_DENIED');};
+const url=`postgresql://ai_qc_sandbox:${password}@127.0.0.1:59941/${name}`,pool=new Pool({connectionString:url,max:4,connectionTimeoutMillis:3000});
+const db=new PrismaClient({adapter:new PrismaPg({connectionString:url}),log:[]});let io,notifications,httpServer;const sockets=[];
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await sleep(20);}throw Error('INTEGRATION_WAIT_TIMEOUT');}
+try{
+ const proof=(await pool.query("SELECT current_database() AS name,current_setting('data_directory') AS directory,inet_server_port() AS port")).rows[0];assert.equal(proof.name,name);assert.equal(Number(proof.port),59941);assert.equal(path.resolve(proof.directory).toLowerCase(),path.join(root,'postgres-data').toLowerCase());
+ for(const table of ['job','warning','delivery'])assert.ok((await pool.query('SELECT to_regclass($1) AS name',['native_ai_qc_monitoring_'+table])).rows[0].name,'Approved sandbox migration required');
+ const actor={id:'synthetic-reviewer',orgId:'synthetic-monitoring-'+Date.now(),departmentIds:[],permissions:['access','create','edit','approve','view_all']};
+ const workspace=new PrismaWorkspaceRepository(db),fixture=path.join(repo,'backend/fixtures/ai-quality-control/vault'),vault=new ObsidianKnowledgeService(()=>[fixture],fixture),approval=new KnowledgeApprovalService(workspace);
+ await vault.sync(actor,workspace,fixture);for(const d of (await workspace.read(actor.orgId)).documents){const type=d.sourcePath.includes('courtesy')?'COURTESY':d.sourcePath.includes('request')?'UNRESOLVED_REQUEST':d.sourcePath.includes('product')?'KNOWLEDGE_MISMATCH':'INSULT';await approval.publish(actor,d.id,{hash:d.contentHash,effectiveFrom:new Date(Date.now()-86400000).toISOString(),effectiveTo:null,departmentIds:[],rule:{id:'fixture-'+type,type,matchTerms:[type==='INSULT'?'đồ ngu':'SYNTHETIC-A miễn phí'],conflictGroup:null,slaSeconds:type==='UNRESOLVED_REQUEST'?300:null,careIntervalDays:null}});}
+ const settings=monitoringSettings(process.env,true);assert.equal(settings.enabled,true);const store=new PostgresMonitoringRepository(pool);let time=Date.now();const clock=()=>time;
+ const adapter=new SyntheticMessageAdapter(store,settings,clock),queue=new MonitoringQueue(store,settings,clock),resolve=async(id,orgId)=>{assert.equal(id,actor.id);assert.equal(orgId,actor.orgId);return actor;};
+ const c=syntheticConversation(actor.orgId,'insult');const event=await Promise.all([adapter.commit(actor,c,'1'),adapter.commit(actor,c,'1')]);assert.equal(event.filter(e=>e.created).length,1);
+ const claims=await Promise.all([queue.claim(actor.orgId),new MonitoringQueue(new PostgresMonitoringRepository(pool),settings,clock).claim(actor.orgId)]);assert.equal(claims.filter(Boolean).length,1);
+ const stale=claims.find(Boolean);time+=settings.leaseMs+1;
+ const restarted=new MonitoringWorker(new MonitoringQueue(new PostgresMonitoringRepository(pool),settings,clock),workspace,resolve);await restarted.tick(actor.orgId);
+ const persisted=await new PostgresMonitoringRepository(pool).read(actor.orgId);assert.equal(persisted.jobs[0].state,'DONE');assert.equal(persisted.jobs[0].attempts,2);assert.ok(persisted.warnings.some(w=>w.category==='CONDUCT_NEEDS_REVIEW'));assert.ok(persisted.warnings.every(warningEvidenceValid));assert.equal(persisted.deliveries.length,persisted.warnings.length);assert.throws(()=>queue.assertLease(persisted.jobs[0],stale),/STALE_LEASE/);
+ await assert.rejects(store.mutate(actor.orgId,s=>{s.warnings=[];throw Error('fixture rollback');}));assert.equal((await store.read(actor.orgId)).warnings.length,persisted.warnings.length);
+ const retryConversation=syntheticConversation(actor.orgId,'polite');await adapter.commit(actor,retryConversation,'retry');const failing=new MonitoringWorker(queue,workspace,async()=>{throw Error('transient fixture');});for(let i=0;i<4;i++){await failing.tick(actor.orgId);time+=settings.backoffMs*2**i;}assert.ok((await store.read(actor.orgId)).jobs.some(j=>j.state==='DEAD'&&j.attempts===4));
+ const off={...settings,enabled:false};const before=(await store.read(actor.orgId)).jobs.length;await new SyntheticMessageAdapter(store,off,clock).commit(actor,syntheticConversation(actor.orgId,'polite'),'off');assert.equal((await store.read(actor.orgId)).jobs.length,before);assert.deepEqual((await store.read('other-tenant')).warnings,[]);
+ httpServer=http.createServer();io=new Server(httpServer,{serveClient:false,transports:['websocket']});
+ notifications=new MonitoringNotifications(io,store,workspace,async socket=>{const token=socket.handshake.auth.token;if(token==='synthetic-owner')return actor;if(token==='synthetic-other')return {...actor,id:'other',orgId:'other-tenant'};throw Error('unauthorized');});
+ await new Promise(r=>httpServer.listen(0,'127.0.0.1',r));const port=httpServer.address().port;allowedPorts.add(port);
+ const events=[],otherEvents=[];
+ const client=connectSocket(`http://127.0.0.1:${port}/ai-qc-monitoring`,{transports:['websocket'],auth:{token:'synthetic-owner'},reconnection:false});sockets.push(client);client.on('qc:warning-updated',event=>{events.push(event);client.emit('qc:ack',event.id);});
+ const other=connectSocket(`http://127.0.0.1:${port}/ai-qc-monitoring`,{transports:['websocket'],auth:{token:'synthetic-other'},reconnection:false});sockets.push(other);other.on('qc:warning-updated',event=>otherEvents.push(event));
+ const invalid=connectSocket(`http://127.0.0.1:${port}/ai-qc-monitoring`,{transports:['websocket'],auth:{token:'invalid'},reconnection:false});sockets.push(invalid);let rejected=false;invalid.on('connect_error',()=>{rejected=true;});
+ await until(()=>client.connected&&other.connected&&rejected);await notifications.flush(actor.orgId);await until(()=>events.length===persisted.warnings.length);await until(async()=>(await store.read(actor.orgId)).deliveries.every(d=>d.acknowledgedBy?.includes(actor.id)));
+ assert.equal(otherEvents.length,0);assert.ok(events.every(e=>Object.keys(e).sort().join(',')==='id,version,warningId'));const count=events.length;await notifications.flush(actor.orgId);await sleep(50);assert.equal(events.length,count);
+ client.disconnect();await until(()=>!client.connected);client.connect();await until(()=>client.connected);await notifications.flush(actor.orgId);await sleep(50);assert.equal(events.length,count);
+ assert.throws(()=>fetch('https://api.openai.com/v1/responses'),/OUTBOUND_DENIED/);
+ const result={at:new Date().toISOString(),result:'PASS',database:'VERIFIED_SYNTHETIC_59941',duplicateCommit:'ONE_JOB',concurrentClaim:'ONE_LEASE',workerReconstruction:'PASS',leaseFencing:'PASS',warnings:persisted.warnings.length,evidenceIntegrity:'PASS',transactionRollback:'PASS',retryDeadLetter:'PASS',featureOff:'PASS',realSocketIoDelivery:'PASS',unauthenticatedSocketDenied:'PASS',socketTenantIsolation:'PASS',durableRecipientAcknowledgment:'PASS',reconnectDedup:'PASS',payload:'INVALIDATION_IDS_ONLY',outboundProbeDenied:denied,realApiCalls:0,productionAccessed:false,browserExecuted:false};
+ fs.writeFileSync(path.join(process.env.QC_TEST_ROOT,'monitoring-integration.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
+}finally{for(const socket of sockets)socket.disconnect();notifications?.close();if(io)await new Promise(r=>io.close(r));else if(httpServer)httpServer.close();await db.$disconnect();await pool.end();}

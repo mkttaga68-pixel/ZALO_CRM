@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {build} from '../frontend/node_modules/vite/dist/node/index.js';
+const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),root=path.resolve(repo,'..','aiqc-manual-real-test-20261102');
+fs.mkdirSync(path.join(root,'empty-env'),{recursive:true});
+if(process.env.VITE_AI_QC_ENABLED!=='true'||process.env.VITE_AI_QC_MONITORING_ENABLED!=='false')throw Error('MANUAL_FRONTEND_BUILD_SCOPE_REQUIRED');
+const output=path.join(root,'frontend');
+if(path.resolve(output)!==path.resolve(repo,'..','aiqc-manual-real-test-20261102','frontend')||fs.existsSync(output)&&fs.realpathSync(output)!==output)throw Error('MANUAL_BUILD_OUTPUT_PATH_INVALID');
+await build({root:path.join(repo,'frontend'),configFile:path.join(repo,'frontend/vite.config.ts'),envDir:path.join(root,'empty-env'),cacheDir:path.join(root,'vite-cache'),build:{outDir:output,emptyOutDir:true}});

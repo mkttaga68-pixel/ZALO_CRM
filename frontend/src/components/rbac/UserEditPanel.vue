@@ -32,7 +32,7 @@
               v-model="localEmail"
               type="email"
               class="field-input"
-              :disabled="!canEditInfo || busy"
+              :disabled="!canEditContactInfo || busy"
               @blur="saveEmail"
               @keyup.enter="saveEmail"
             />
@@ -41,7 +41,7 @@
               v-model="localPhone"
               class="field-input"
               placeholder="0912345678 — để trống nếu không dùng"
-              :disabled="!canEditInfo || busy"
+              :disabled="!canEditContactInfo || busy"
               @blur="savePhone"
               @keyup.enter="savePhone"
             />
@@ -53,8 +53,7 @@
               <label class="field-label">Vai trò</label>
               <select v-model="localRole" class="field-input" :disabled="busy" @change="saveRole">
                 <option value="member">Nhân viên</option>
-                <option value="admin">Quản trị viên</option>
-                <option value="owner">Chủ tổ chức</option>
+                <option v-if="currentUserRole === 'owner'" value="admin">Quản trị viên</option>
               </select>
               <p class="hint-soft" style="margin-top:4px">
                 Chủ tổ chức có toàn quyền, kể cả xoá nhân viên. Chỉ chủ tổ chức đổi được vai trò.
@@ -100,7 +99,7 @@
           <section class="section">
             <h3 class="section-title">Phòng ban</h3>
             <label class="field-label">Phòng ban</label>
-            <select v-model="deptIdLocal" class="field-input" :disabled="busy" @change="onDeptChange">
+            <select v-model="deptIdLocal" class="field-input" :disabled="busy || !canManageTarget" @change="onDeptChange">
               <option value="">— Không thuộc phòng nào —</option>
               <option v-for="d in flatDepts" :key="d.id" :value="d.id">
                 {{ '— '.repeat(d._depth) }}{{ d.name }}
@@ -111,7 +110,7 @@
               v-if="deptIdLocal"
               v-model="deptRoleLocal"
               class="field-input"
-              :disabled="busy"
+              :disabled="busy || !canManageTarget"
               @change="onDeptRoleChange"
             >
               <option value="member">👤 Nhân viên</option>
@@ -127,9 +126,9 @@
           <section class="section">
             <h3 class="section-title">Nhóm quyền</h3>
             <label class="field-label">Gán nhóm quyền</label>
-            <select v-model="pgIdLocal" class="field-input" :disabled="busy" @change="onPgChange">
+            <select v-model="pgIdLocal" class="field-input" :disabled="busy || !canManagePermissions" @change="onPgChange">
               <option value="">— Chưa gán —</option>
-              <option v-for="g in flatGroups" :key="g.id" :value="g.id">
+              <option v-for="g in flatGroups" :key="g.id" :value="g.id" :disabled="!(props.user?.assignableGroupIds ?? []).includes(g.id)">
                 {{ '— '.repeat(g._depth) }}{{ g.name }}{{ g.isSystem ? ' (hệ thống)' : '' }}
               </option>
             </select>
@@ -175,7 +174,7 @@
           <section class="section">
             <h3 class="section-title">Cấu hình Riêng tư</h3>
             <label class="field-label">Max nick riêng tư</label>
-            <select v-model="maxPrivacyLocal" class="field-input" :disabled="busy" @change="onMaxPrivacyChange">
+            <select v-model="maxPrivacyLocal" class="field-input" :disabled="busy || !canManageTarget" @change="onMaxPrivacyChange">
               <option v-for="n in 10" :key="n" :value="n">{{ n }} nick</option>
             </select>
             <p class="hint-soft" style="margin-top:6px">
@@ -344,24 +343,27 @@ const ownedNicks = ref<OwnedNick[]>([]);
 // Phase Privacy v2 2026-05-23
 const maxPrivacyLocal = ref<number>(2);
 
+const canManageTarget = computed(() => !!props.user?.canManageAccess);
+const canManagePermissions = computed(() => !!props.user?.canManagePermissions);
+const canEditContactInfo = computed(() => canManageTarget.value && ['owner', 'admin'].includes(props.currentUserRole));
 const canEditInfo = computed(() => {
   const u = props.user;
   if (!u) return false;
   // Owner edits self always; owner/admin edits anyone
   if (u.id === props.currentUserId) return true;
-  return ['owner', 'admin'].includes(props.currentUserRole);
+  return canManageTarget.value && ['owner', 'admin'].includes(props.currentUserRole);
 });
 const canDeactivate = computed(() => {
-  return props.currentUserRole === 'owner' && props.user?.id !== props.currentUserId;
+  return props.currentUserRole === 'owner' && canManageTarget.value;
 });
 
 // Chỉ chủ tổ chức đổi được vai trò, và không đổi vai trò của chính mình
 // (tránh tự hạ quyền rồi kẹt ngoài hệ thống).
 const canEditRole = computed(
-  () => props.currentUserRole === 'owner' && props.user?.id !== props.currentUserId,
+  () => canManagePermissions.value && props.currentUserRole === 'owner' && props.user?.role === 'admin',
 );
 // Đặt lại mật khẩu: owner/admin — khớp quyền của endpoint BE.
-const canResetPassword = computed(() => ['owner', 'admin'].includes(props.currentUserRole));
+const canResetPassword = computed(() => canManageTarget.value && ['owner', 'admin'].includes(props.currentUserRole));
 
 const canConfirmDelete = computed(() => {
   const p = deletePreview.value;
@@ -462,7 +464,7 @@ async function saveFullName() {
 }
 
 async function saveEmail() {
-  if (!props.user || !canEditInfo.value) return;
+  if (!props.user || !canEditContactInfo.value) return;
   const trimmed = localEmail.value.trim();
   if (!trimmed || trimmed === props.user.email) return;
   busy.value = true;
@@ -478,7 +480,7 @@ async function saveEmail() {
 }
 
 async function savePhone() {
-  if (!props.user || !canEditInfo.value) return;
+  if (!props.user || !canEditContactInfo.value) return;
   const trimmed = localPhone.value.trim();
   const current = ((props.user as any).phone ?? '') as string;
   if (trimmed === current) return;
@@ -538,7 +540,7 @@ async function savePassword() {
 // Luôn hỏi BE trước xem cần bàn giao gì: nick Zalo / ghi chú / kịch bản đều là
 // khoá ngoại bắt buộc, không chuyển chủ thì lệnh xoá sẽ fail.
 async function openDeleteDialog() {
-  if (!props.user) return;
+  if (!props.user || !canDeactivate.value) return;
   busy.value = true;
   deleteError.value = '';
   try {
@@ -577,6 +579,7 @@ async function confirmHardDelete() {
 }
 
 async function onDeptChange() {
+  if (!canManageTarget.value) return;
   if (!props.user) return;
   // Empty = remove from current dept (no API support for explicit remove without endpoint).
   // Workaround: if user had a dept and selected '' → call DELETE on /departments/:old/members/:userId
@@ -599,6 +602,7 @@ async function onDeptChange() {
 }
 
 async function onDeptRoleChange() {
+  if (!canManageTarget.value) return;
   if (!props.user || !deptIdLocal.value) return;
   busy.value = true;
   try {
@@ -612,6 +616,7 @@ async function onDeptRoleChange() {
 }
 
 async function onPgChange() {
+  if (!canManagePermissions.value || (pgIdLocal.value && !(props.user?.assignableGroupIds ?? []).includes(pgIdLocal.value))) return;
   if (!props.user) return;
   busy.value = true;
   try {
@@ -626,7 +631,7 @@ async function onPgChange() {
 
 // Phase Privacy v2 2026-05-23
 async function onMaxPrivacyChange() {
-  if (!props.user) return;
+  if (!props.user || !canManageTarget.value) return;
   busy.value = true;
   error.value = '';
   try {
@@ -641,7 +646,7 @@ async function onMaxPrivacyChange() {
 }
 
 async function confirmDeactivate() {
-  if (!props.user) return;
+  if (!props.user || !canDeactivate.value || !props.user.isActive) return;
   if (!confirm(`Vô hiệu hóa user "${props.user.fullName || props.user.email}"? User sẽ không đăng nhập được.`)) return;
   busy.value = true;
   try {
@@ -656,7 +661,7 @@ async function confirmDeactivate() {
 }
 
 async function confirmReactivate() {
-  if (!props.user) return;
+  if (!props.user || !canDeactivate.value || props.user.isActive) return;
   busy.value = true;
   try {
     await api.put(`/users/${props.user.id}`, { isActive: true });

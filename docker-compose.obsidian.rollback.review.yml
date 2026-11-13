@@ -1,0 +1,12 @@
+# REVIEW ONLY. Merge after the ORIGINAL three active Compose files.
+# Do not include the new mount/activation overlays in a rollback invocation.
+services:
+  app:
+    image: sha256:875af855e10402bf3da8c74eefd53f257584156397dbaf0934c6846ab0092989
+    environment:
+      AI_QC_ENABLED: "false"
+      AI_QC_REAL_DATA_ENABLED: "false"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"
+      AI_QC_AUTO_MONITOR_ENABLED: "false"

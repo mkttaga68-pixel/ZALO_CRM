@@ -61,6 +61,7 @@ export function registerSocketAuth(io: Server, app: FastifyInstance): void {
         email?: string;
         role?: string;
         orgId?: string;
+        credentialVersion?: string;
       };
 
       // Token hợp lệ về chữ ký nhưng thiếu claim thì vẫn từ chối — tránh join
@@ -79,10 +80,29 @@ export function registerSocketAuth(io: Server, app: FastifyInstance): void {
       } satisfies SocketIdentity;
 
       trackUserSocket(socket, payload.orgId, payload.id);
+      // Passive sockets also lose access after reset/expiry on another process.
+      let checking = false;
+      const revalidate = setInterval(async () => {
+        if (checking) return;
+        checking = true;
+        try { await assertActiveSession(app.jwt.verify(token) as typeof payload); }
+        catch { socket.disconnect(true); }
+        finally { checking = false; }
+      }, 30_000);
+      revalidate.unref();
+      socket.once('disconnect', () => clearInterval(revalidate));
       socket.use(async (_packet, packetNext) => {
         try {
           const current = app.jwt.verify(token) as typeof payload;
           await assertActiveSession(current);
+          if (_packet[0] === 'chat:typing') {
+            const { mayReceiveModuleEvent } = await import('./rbac-socket-adapter.js');
+            const { userHasGrant } = await import('../modules/rbac/permission-group-service.js');
+            if (!await userHasGrant(current.id!, 'conversation', 'edit') ||
+                !await mayReceiveModuleEvent(socket, {data:_packet}, {rooms:new Set()})) {
+              packetNext(new Error('RBAC_FORBIDDEN')); return;
+            }
+          }
           packetNext();
         } catch {
           socket.disconnect(true);

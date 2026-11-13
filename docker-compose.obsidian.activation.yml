@@ -1,0 +1,20 @@
+# PREPARED ONLY. Never applied in the E2E readiness review.
+# Separate production approval, confirmed org and maintenance window required.
+# Merge LAST, preserving the existing service, image and file_storage volume.
+services:
+  app:
+    volumes:
+      - type: bind
+        source: C:/Users/ADMIN/Downloads/ZALO_CRM_AI_BRAIN
+        target: /knowledge/obsidian
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      AI_QC_VAULT_ROOTS_BY_TENANT: '{"${OBSIDIAN_ORG_ID:?Set the separately authorized organization ID}":["/knowledge/obsidian"]}'
+      AI_QC_ENABLED: "false"
+      AI_QC_STORAGE: application
+      AI_QC_REAL_DATA_ENABLED: "false"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"

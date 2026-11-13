@@ -1,0 +1,9 @@
+// New native module. No dependency on the removed Sprint 1–5 schemas.
+// Bounded tenant workspace; immutable document/run snapshots and audit in JSON.
+model NativeAiQcWorkspace {
+  organizationId String @id @map("organization_id")
+  version Int @default(0)
+  payload Json
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@map("native_ai_qc_workspace")
+}

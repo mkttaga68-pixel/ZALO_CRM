@@ -1,0 +1,17 @@
+# Explicit deployment opt-in for the EXISTING app service. Do not use by default.
+# Merge after the current local override to preserve existing posting/storage settings.
+services:
+  app:
+    image: ${AI_QC_IMAGE_TAG:-zl-crm-app:ai-qc-shared-20261101}
+    build:
+      args:
+        VITE_AI_QC_ENABLED: "true"
+    environment:
+      AI_QC_ENABLED: "true"
+      AI_QC_STORAGE: application
+      AI_QC_SANDBOX_RUNTIME: "false"
+      # Owner authorized CRM reads on 2026-11-01; provider outbound stays disabled.
+      AI_QC_REAL_DATA_ENABLED: "true"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"

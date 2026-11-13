@@ -7,10 +7,13 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
-import { seedDefaultPermissionGroups, migrateLegacyUsersToPermissionGroups } from './seed-default-groups.js';
+import { seedDefaultPermissionGroups } from './seed-default-groups.js';
 import { userHasGrant } from './permission-group-service.js';
 import type { Resource, Action } from './permission-types.js';
 import { config } from '../../config/index.js';
+import { assertAssignGroup, authorityHasGrant, isStrictlyAbove, loadPermissionAuthority,
+  withPermissionAuthority } from './permission-authority.js';
+import { requireRole } from '../auth/role-middleware.js';
 
 function requireGrant(resource: Resource, action: Action) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
@@ -71,7 +74,18 @@ export async function registerUserAssignmentRoutes(app: FastifyInstance): Promis
       ? users.filter((u) => u.departmentMember?.departmentId === query.departmentId)
       : users;
 
-    return reply.send({ users: filtered });
+    const authority=await loadPermissionAuthority(prisma,user.id,user.orgId);
+    // Evaluate destinations per target: both its current level and the new group
+    // must be below the actor; these flags are advisory UI data only.
+    return reply.send({ users: filtered.map(u=>{
+      const target=authority.users.find(t=>t.id===u.id);
+      const canManageAccess=!!target && isStrictlyAbove(authority,target) && authorityHasGrant(authority,'user','edit');
+      const canManagePermissions=canManageAccess && authorityHasGrant(authority,'permission_group','edit');
+      const assignableGroupIds=canManagePermissions ? authority.groups.filter(g=>{
+        try { assertAssignGroup(authority,u.id,g.id); return true; } catch { return false; }
+      }).map(g=>g.id) : [];
+      return {...u,canManageAccess,canManagePermissions,assignableGroupIds};
+    }) });
   });
 
   // PATCH /api/v1/rbac/users/:id/permission-group — gán user vào permission group
@@ -82,32 +96,16 @@ export async function registerUserAssignmentRoutes(app: FastifyInstance): Promis
     const { id } = request.params as { id: string };
     const body = (request.body ?? {}) as { permissionGroupId?: string | null };
 
-    // Validate target user ∈ org
-    const target = await prisma.user.findFirst({
-      where: { id, orgId: user.orgId },
-      select: { id: true },
-    });
-    if (!target) return reply.status(404).send({ error: 'User không tồn tại' });
-
-    // Validate permission group ∈ org (nếu set)
-    if (body.permissionGroupId) {
-      const grp = await prisma.permissionGroup.findFirst({
-        where: { id: body.permissionGroupId, orgId: user.orgId, archivedAt: null },
-        select: { id: true },
-      });
-      if (!grp) return reply.status(400).send({ error: 'Nhóm quyền không tồn tại' });
-    }
-
-    await prisma.user.update({
-      where: { id },
-      data: { permissionGroupId: body.permissionGroupId ?? null },
+    await withPermissionAuthority(user.id,user.orgId,'user','edit',async(tx,authority)=>{
+      assertAssignGroup(authority,id,body.permissionGroupId ?? null);
+      await tx.user.update({where:{id,orgId:user.orgId},data:{permissionGroupId:body.permissionGroupId ?? null}});
     });
     return reply.send({ ok: true });
   });
 
   // POST /api/v1/admin/rbac/seed-default-groups — admin endpoint seed 7 group
   app.post('/api/v1/admin/rbac/seed-default-groups', {
-    preHandler: [authMiddleware, requireGrant('permission_group', 'create')],
+    preHandler: [authMiddleware, requireRole('owner'), requireGrant('permission_group', 'create')],
   }, async (request, reply) => {
     const user = (request as any).user;
     try {
@@ -122,13 +120,7 @@ export async function registerUserAssignmentRoutes(app: FastifyInstance): Promis
   app.post('/api/v1/admin/rbac/migrate-legacy-users', {
     preHandler: [authMiddleware, requireGrant('user', 'edit')],
   }, async (request, reply) => {
-    const user = (request as any).user;
-    try {
-      const result = await migrateLegacyUsersToPermissionGroups(user.orgId);
-      return reply.send({ ok: true, ...result });
-    } catch (e: any) {
-      return reply.status(500).send({ error: e.message });
-    }
+    return reply.status(403).send({error:'Không cho đổi nhóm quyền hàng loạt qua phiên đăng nhập; cần quy trình migration riêng để tránh tự sửa quyền'});
   });
 
   // POST /api/v1/admin/rbac/create-test-users — tạo 6 test user (CEO/Manager/Sale Senior/Sale × 2/Marketing)
@@ -138,7 +130,7 @@ export async function registerUserAssignmentRoutes(app: FastifyInstance): Promis
   // và test-ceo@rbac.local được tạo với role 'admin' + nhóm quyền CEO — gọi nhầm một
   // lần trên production là để lại một tài khoản toàn quyền ai cũng biết mật khẩu.
   app.post('/api/v1/admin/rbac/create-test-users', {
-    preHandler: [authMiddleware, requireGrant('user', 'create')],
+    preHandler: [authMiddleware, requireRole('owner'), requireGrant('user', 'create')],
   }, async (request, reply) => {
     if (config.isProduction) {
       return reply.status(404).send({ error: 'not found' });

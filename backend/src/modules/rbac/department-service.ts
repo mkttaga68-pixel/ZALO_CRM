@@ -14,6 +14,7 @@
  * - Anti-cycle move (trigger raise nếu new parent nằm trong subtree)
  */
 import { randomUUID } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/database/prisma-client.js';
 
 export type DeptRole = 'leader' | 'deputy' | 'member';
@@ -280,16 +281,16 @@ export async function assignUserToDepartment(input: {
   departmentId: string;
   userId: string;
   deptRole: DeptRole;
-}): Promise<void> {
+}, db: any = prisma): Promise<void> {
   // Validate dept trong org
-  const dept = await prisma.department.findFirst({
+  const dept = await db.department.findFirst({
     where: { id: input.departmentId, orgId: input.orgId, archivedAt: null },
     select: { id: true },
   });
   if (!dept) throw new Error('Phòng ban không tồn tại');
 
   // Validate user trong org
-  const user = await prisma.user.findFirst({
+  const user = await db.user.findFirst({
     where: { id: input.userId, orgId: input.orgId },
     select: { id: true },
   });
@@ -301,7 +302,7 @@ export async function assignUserToDepartment(input: {
   // → upsert sẽ throw P2002. Em pre-check để trả error message rõ ràng kèm
   // tên người đang giữ chức vụ thay vì raw P2002 generic.
   if (input.deptRole === 'leader' || input.deptRole === 'deputy') {
-    const existing = await prisma.departmentMember.findFirst({
+    const existing = await db.departmentMember.findFirst({
       where: {
         departmentId: input.departmentId,
         deptRole: input.deptRole,
@@ -322,7 +323,7 @@ export async function assignUserToDepartment(input: {
   }
 
   // Upsert (UNIQUE user_id sẽ trigger delete-then-create dạng move)
-  await prisma.departmentMember.upsert({
+  await db.departmentMember.upsert({
     where: { userId: input.userId },
     update: { departmentId: input.departmentId, deptRole: input.deptRole },
     create: {
@@ -334,9 +335,9 @@ export async function assignUserToDepartment(input: {
   });
 }
 
-export async function removeUserFromDepartment(orgId: string, userId: string, deptId?: string): Promise<void> {
+export async function removeUserFromDepartment(orgId: string, userId: string, deptId?: string, db: any = prisma): Promise<void> {
   // Sanity: ensure user ∈ org
-  const user = await prisma.user.findFirst({
+  const user = await db.user.findFirst({
     where: { id: userId, orgId },
     select: { id: true },
   });
@@ -345,16 +346,16 @@ export async function removeUserFromDepartment(orgId: string, userId: string, de
   // FIX codex review #6: nếu caller pass deptId → enforce user ĐANG ở dept đó
   // Tránh trick "delete /departments/random/members/userX" remove user khỏi dept thật
   if (deptId) {
-    const dept = await prisma.department.findFirst({
+    const dept = await db.department.findFirst({
       where: { id: deptId, orgId },
       select: { id: true },
     });
     if (!dept) throw new Error('Phòng ban không tồn tại');
-    await prisma.departmentMember.deleteMany({ where: { userId, departmentId: deptId } });
+    await db.departmentMember.deleteMany({ where: { userId, departmentId: deptId } });
     return;
   }
 
-  await prisma.departmentMember.deleteMany({ where: { userId } });
+  await db.departmentMember.deleteMany({ where: { userId } });
 }
 
 /**

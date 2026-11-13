@@ -1,0 +1,13 @@
+# Local manual scan controls. Keep this overlay last; never use for production rollout.
+services:
+  app:
+    # Real vault excludes test samples. Rollback: zl-crm-app:aiqc-job-recovery-20261113
+    image: zl-crm-app:aiqc-real-source-20261113
+    pull_policy: never
+    build: !reset null
+    environment:
+      AI_QC_DEPLOYMENT_TIER: local-test
+      AI_QC_DEPT_MONITOR_LOCAL_TEST_ENABLED: "true"
+      AI_QC_AUTO_MONITOR_ENABLED: "false"
+      # Quét liên tục + cảnh báo realtime. Cần migration 20261111170000_ai_qc_continuous_local (đã áp 11/11).
+      AI_QC_CONTINUOUS_LOCAL_ENABLED: "true"

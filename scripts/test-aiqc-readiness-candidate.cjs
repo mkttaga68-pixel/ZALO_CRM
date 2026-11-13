@@ -1,0 +1,6 @@
+const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
+const repo=path.resolve(__dirname,'..'),root=path.resolve(repo,'..','aiqc-readiness-closure-20261102'),image=JSON.parse(fs.readFileSync(path.join(root,'candidate-image.json'),'utf8')).imageId;
+const r=spawnSync('docker',['run','--rm','--pull','never','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true','--tmpfs','/tmp:rw,size=64m,mode=1777','--mount','type=bind,source='+path.join(repo,'scripts/verify-aiqc-candidate.mjs')+',target=/verify.mjs,readonly','--entrypoint','node',image,'/verify.mjs'],{encoding:'utf8',windowsHide:true,timeout:30000});
+fs.writeFileSync(path.join(root,'candidate-test.log'),r.stdout+'\n'+r.stderr);
+if(r.status!==0){console.error(r.stderr);process.exit(1);}
+const result={...JSON.parse(r.stdout),imageId:image};fs.writeFileSync(path.join(root,'candidate-test-results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));

@@ -1,0 +1,2 @@
+import { defineConfig } from 'vitest/config';
+export default defineConfig({ test: { environment: 'node', include: ['tests/openai-control.test.ts','tests/native-ai-quality-control.test.ts','tests/manual-real-analysis.test.ts'], setupFiles: ['tests/native-ai-quality-control.setup.ts'], fileParallelism: false, maxWorkers: 1, testTimeout: 15000, reporters: ['default','json'], outputFile: {json: process.env.QC_TEST_ROOT + '/results.json'} } });

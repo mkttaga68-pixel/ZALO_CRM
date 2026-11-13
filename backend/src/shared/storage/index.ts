@@ -58,6 +58,11 @@ export function downloadCandidates(url: string): string[] {
   return storage.downloadCandidates(url);
 }
 
+/** Read a configured bucket/key through S3; no HTTP redirect or arbitrary host. */
+export function downloadOwnMediaBuffer(url: string, maxBytes: number, timeoutMs: number) {
+  return storage.downloadOwnBuffer(url, maxBytes, timeoutMs);
+}
+
 export function uploadBuffer(
   buffer: Buffer,
   mimeType: string,

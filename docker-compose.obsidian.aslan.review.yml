@@ -1,0 +1,22 @@
+# REVIEW ONLY. NOT APPLIED. Owner confirmed org; restart window not authorized.
+# Candidate image must contain the tested effective-time revision fix.
+# Merge last after the exact active base/override/ai-qc files.
+services:
+  app:
+    image: ${OBSIDIAN_CANDIDATE_IMAGE:?Set the reviewed immutable candidate image}
+    volumes:
+      - type: bind
+        source: C:/Users/ADMIN/Downloads/ZALO_CRM_AI_BRAIN
+        target: /knowledge/obsidian
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      AI_QC_ENABLED: "true"
+      AI_QC_STORAGE: application
+      AI_QC_VAULT_ROOTS_BY_TENANT: '{"a236afea-cc9c-4de8-81c0-ee5923385b2e":["/knowledge/obsidian"]}'
+      AI_QC_REAL_DATA_ENABLED: "false"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"
+      AI_QC_AUTO_MONITOR_ENABLED: "false"

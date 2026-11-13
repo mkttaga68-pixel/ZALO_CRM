@@ -22,6 +22,9 @@ vi.mock('../src/shared/zalo-operations.js', () => ({
   },
 }));
 vi.mock('../src/shared/event-buffer.js', () => ({ eventBuffer: eventBufferMock }));
+vi.mock('../src/shared/utils/safe-media-download.js', () => ({
+  downloadMediaBuffer: vi.fn(async () => ({ buffer: Buffer.from([1, 2, 3]), mimeType: 'image/jpeg' })),
+}));
 vi.mock('../src/modules/auth/auth-middleware.js', () => ({
   authMiddleware: async (req: any) => { req.user = mockUser(); },
 }));
@@ -39,6 +42,7 @@ vi.mock('../src/shared/video-processor.js', () => ({
 
 // Import AFTER mocks are registered
 const { chatOperationsRoutes } = await import('../src/modules/chat/chat-operations-routes.js');
+const { downloadMediaBuffer } = await import('../src/shared/utils/safe-media-download.js');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 const ACCOUNT = { id: 'za-1', zaloUid: 'uid-own', privacyMode: 'sub', ownerUserId: 'user-1' };
@@ -47,6 +51,7 @@ const CONV = { id: 'conv-1', orgId: 'org-1', threadType: 'user', externalThreadI
 function buildApp(): FastifyInstance {
   const app = Fastify({ logger: false });
   app.decorate('io', mockIO());
+  app.decorate('policy', { check: vi.fn().mockResolvedValue(true) });
   app.register(chatOperationsRoutes);
   return app;
 }
@@ -71,6 +76,7 @@ beforeEach(() => {
   prismaMock.conversation.findUnique.mockResolvedValue(CONV);
   prismaMock.conversation.update.mockResolvedValue({});
   prismaMock.zaloAccount.findUnique.mockResolvedValue(ACCOUNT);
+  prismaMock.zaloAccount.findFirst.mockResolvedValue(ACCOUNT);
   prismaMock.messageReaction.upsert.mockResolvedValue({});
   prismaMock.messageReaction.count.mockResolvedValue(1);
   prismaMock.pinnedConversation.upsert.mockResolvedValue({});
@@ -201,11 +207,6 @@ describe('POST /api/v1/conversations/:id/forward', () => {
   });
 
   it('forwards image messages by resending the media file to targets', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
-    });
-    vi.stubGlobal('fetch', fetchMock);
     prismaMock.message.findFirst.mockResolvedValueOnce({
       id: 'msg-img-1',
       zaloMsgId: 'zalo-img-1',
@@ -230,12 +231,11 @@ describe('POST /api/v1/conversations/:id/forward', () => {
 
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({ success: true, forwarded: 1, failed: 0 });
-    expect(fetchMock).toHaveBeenCalled();
+    expect(downloadMediaBuffer).toHaveBeenCalledWith('http://localhost:9000/zalocrm-attachments/2026-05-25/image.jpg');
     expect(zaloOpsMock.sendFile).toHaveBeenCalledWith('za-1', 'ext-1', 0, [expect.stringContaining('image.jpg')], expect.anything());
     expect(prismaMock.message.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ conversationId: 'conv-2', contentType: 'image', senderType: 'self' }),
     }));
-    vi.unstubAllGlobals();
   });
 
   it('returns 400 when msgId or targetConversationIds missing', async () => {

@@ -21,6 +21,19 @@ import { buildDeletionPreview, deleteUserPermanently } from './user-delete-servi
 import { randomUUID } from 'node:crypto';
 import { logger } from '../../shared/utils/logger.js';
 import { revokeUserSockets } from '../../shared/socket-revocation.js';
+import { assertAuthorityGrant, assertManageUser, assertNewRole, withPermissionAuthority } from '../rbac/permission-authority.js';
+
+async function writeSubordinate<T>(actor: {id:string;orgId:string}, targetId: string, action: 'edit'|'delete',
+  mutate: (tx: any)=>Promise<T>, proposedRole?: unknown): Promise<T> {
+  return withPermissionAuthority(actor.id,actor.orgId,'user',action,async(tx,authority)=>{
+    assertManageUser(authority,targetId);
+    if (proposedRole !== undefined) {
+      assertAuthorityGrant(authority,'permission_group','edit');
+      assertNewRole(authority,proposedRole);
+    }
+    return mutate(tx);
+  });
+}
 
 // Generic message used for any validation rejection on user mutation.
 // Don't differentiate "email exists" vs "invalid format" — that's the oracle.
@@ -78,7 +91,9 @@ export async function userRoutes(app: FastifyInstance) {
     const passwordHash = await bcrypt.hash(password, 10);
     let user;
     try {
-      user = await prisma.user.create({
+      user = await withPermissionAuthority(currentUser.id,currentUser.orgId,'user','create',async(tx,authority)=>{
+        assertNewRole(authority,role);
+        return tx.user.create({
         data: {
           id: randomUUID(),
           orgId: currentUser.orgId,
@@ -96,6 +111,7 @@ export async function userRoutes(app: FastifyInstance) {
           isActive: true,
           createdAt: true,
         },
+        });
       });
     } catch (err) {
       if (isUniqueViolation(err)) {
@@ -121,6 +137,10 @@ export async function userRoutes(app: FastifyInstance) {
     if (!isAdmin && !isSelf) {
       return reply.status(403).send({ error: 'Không có quyền' });
     }
+
+    const target = await prisma.user.findFirst({ where: { id, orgId: currentUser.orgId }, select: { role: true } });
+    if (!target) return reply.status(404).send({ error: 'Không tìm thấy người dùng' });
+    if (!isOwner && target.role === 'owner') return reply.status(403).send({ error: 'Không được chỉnh sửa tài khoản chủ tổ chức' });
 
     const { fullName, email, phone, role, teamId, isActive } = request.body as any;
 
@@ -172,8 +192,8 @@ export async function userRoutes(app: FastifyInstance) {
 
     let user;
     try {
-      user = await prisma.user.update({
-        where: { id, orgId: currentUser.orgId },
+      const update = (db: any) => db.user.update({
+        where: { id, orgId: currentUser.orgId, ...(!isOwner ? { role: { not: 'owner' } } : {}) },
         data: updateData,
         select: {
           id: true,
@@ -185,7 +205,13 @@ export async function userRoutes(app: FastifyInstance) {
           teamId: true,
         },
       });
+      if (isSelf && role !== undefined) return reply.status(400).send({ error: 'Khong the thay doi role cua chinh minh' });
+      const onlyOwnProfile = isSelf && role === undefined && teamId === undefined && isActive === undefined;
+      user = await (onlyOwnProfile ? update(prisma) : writeSubordinate(currentUser,id,'edit',update,role));
     } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+        return reply.status(404).send({ error: 'Không tìm thấy người dùng trong phạm vi được chỉnh sửa' });
+      }
       if (isUniqueViolation(err)) {
         return reply.status(400).send({ error: GENERIC_VALIDATION_ERROR });
       }
@@ -205,15 +231,22 @@ export async function userRoutes(app: FastifyInstance) {
 
     const { id } = request.params as { id: string };
     const { password } = request.body as { password: string };
-    if (!password || password.length < 6) {
+    if (typeof password !== 'string' || password.length < 6) {
       return reply.status(400).send({ error: 'Mật khẩu tối thiểu 6 ký tự' });
     }
 
+    const target = await prisma.user.findFirst({ where: { id, orgId: currentUser.orgId }, select: { role: true } });
+    if (!target) return reply.status(404).send({ error: 'Không tìm thấy người dùng' });
+    if (currentUser.role !== 'owner' && target.role === 'owner') return reply.status(403).send({ error: 'Không được đặt lại mật khẩu chủ tổ chức' });
     const passwordHash = await bcrypt.hash(password, 10);
-    await prisma.user.update({
-      where: { id, orgId: currentUser.orgId },
+    const updatePassword = (db: any) => db.user.updateMany({
+      where: { id, orgId: currentUser.orgId, ...(currentUser.role !== 'owner' ? { role: { not: 'owner' } } : {}) },
       data: { passwordHash },
     });
+    const changed = await (id === currentUser.id ? updatePassword(prisma) : writeSubordinate(currentUser,id,'edit',updatePassword));
+
+    if (!changed.count) return reply.status(403).send({ error: 'Không còn quyền thay đổi tài khoản này' });
+    revokeUserSockets(currentUser.orgId, id);
 
     return { success: true };
   });
@@ -226,6 +259,7 @@ export async function userRoutes(app: FastifyInstance) {
       return reply.status(403).send({ error: 'Chỉ chủ tổ chức có quyền xoá nhân viên' });
     }
     const { id } = request.params as { id: string };
+    await withPermissionAuthority(currentUser.id,currentUser.orgId,'user','delete',async(_tx,authority)=>{assertManageUser(authority,id);});
     const preview = await buildDeletionPreview(currentUser.orgId, id);
     if (!preview) return reply.status(404).send({ error: 'Nhân viên không tồn tại trong tổ chức' });
     return { preview };
@@ -249,14 +283,15 @@ export async function userRoutes(app: FastifyInstance) {
     }
 
     if (mode !== 'hard') {
-      await prisma.user.update({
+      await writeSubordinate(currentUser,id,'delete',tx=>tx.user.update({
         where: { id, orgId: currentUser.orgId },
         data: { isActive: false },
-      });
+      }));
       revokeUserSockets(currentUser.orgId, id);
       return { success: true, mode: 'deactivate' };
     }
 
+    await withPermissionAuthority(currentUser.id,currentUser.orgId,'user','delete',async(_tx,authority)=>{assertManageUser(authority,id);});
     const res = await deleteUserPermanently({
       orgId: currentUser.orgId,
       userId: id,
@@ -304,10 +339,10 @@ export async function userRoutes(app: FastifyInstance) {
     });
     if (!target) return reply.status(404).send({ error: 'User không tồn tại trong org' });
 
-    await prisma.user.update({
+    await writeSubordinate(currentUser,id,'edit',tx=>tx.user.update({
       where: { id },
       data: { maxPrivacyNicks: max },
-    });
+    }));
 
     return { ok: true, userId: id, maxPrivacyNicks: max };
   });

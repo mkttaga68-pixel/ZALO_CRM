@@ -2243,6 +2243,73 @@ model DepartmentMember {
   @@map("department_members")
 }
 
+// Local department scans require a persisted opt-in and a confirmed manual preview.
+model AiQcDepartmentMonitorConfig {
+  orgId                  String   @map("org_id")
+  departmentId           String   @map("department_id")
+  enabled                Boolean  @default(false)
+  version                BigInt   @default(1)
+  analysisTypes          Json     @default("[]") @map("analysis_types")
+  recipientUserIds      Json     @default("[]") @map("recipient_user_ids")
+  lookbackHours          Int      @default(24) @map("lookback_hours")
+  maxConversationsPerRun Int      @default(100) @map("max_conversations_per_run")
+  approvalRef            String?  @map("approval_ref")
+  continuousEnabled      Boolean  @default(false) @map("continuous_enabled")
+  activatedAt            DateTime? @map("activated_at") @db.Timestamptz(6)
+  principalEpoch         String? @map("principal_epoch")
+  updatedBy              String   @map("updated_by")
+  updatedAt              DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([orgId, departmentId])
+  @@map("ai_qc_department_monitor_config")
+}
+
+model AiQcDepartmentMonitorAudit {
+  id             String   @id
+  orgId          String   @map("org_id")
+  departmentId   String?  @map("department_id")
+  actorUserId    String   @map("actor_user_id")
+  action         String
+  changedFields  Json     @default("[]") @map("changed_fields")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([orgId, createdAt(sort: Desc)])
+  @@map("ai_qc_department_monitor_audit")
+}
+
+model AiQcDepartmentMonitorControl {
+  orgId     String   @id @map("org_id")
+  paused    Boolean  @default(false)
+  version   BigInt   @default(1)
+  updatedBy String   @map("updated_by")
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("ai_qc_department_monitor_control")
+}
+
+model AiQcContinuousJob {
+  id String @id
+  orgId String @map("org_id")
+  departmentId String @map("department_id")
+  configVersion BigInt @map("config_version")
+  messageId String @map("message_id")
+  conversationId String @map("conversation_id")
+  employeeId String @map("employee_id")
+  state String @default("PENDING")
+  attempts Int @default(0)
+  generation Int @default(0)
+  dueAt DateTime @default(now()) @map("due_at") @db.Timestamptz(6)
+  leaseUntil DateTime? @map("lease_until") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  runId String? @map("run_id")
+  errorCode String? @map("error_code")
+  notified Boolean @default(false)
+  @@unique([orgId,departmentId,configVersion,messageId])
+  @@index([orgId,state,dueAt])
+  @@map("ai_qc_continuous_job")
+}
+
 model PermissionGroup {
   id            String   @id @default(uuid())
   orgId         String   @map("org_id")

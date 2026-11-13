@@ -88,10 +88,14 @@ import { eventBuffer } from './shared/event-buffer.js';
 import { buildContext } from './core/build-context.js';
 import { loadPlugins } from './core/plugin-host.js';
 import { optionalAuthMiddleware } from './modules/auth/auth-middleware.js';
+import { strictModuleAccess } from './modules/rbac/module-access.js';
+import { RbacSocketAdapter } from './shared/rbac-socket-adapter.js';
+import { syntheticQcSandbox } from './modules/ai-quality-control/sandbox-profile.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function bootstrap() {
+  const isolatedQc = syntheticQcSandbox();
   const app = Fastify({ logger: false });
 
   // ── Plugins ──────────────────────────────────────────────────────────────
@@ -112,6 +116,7 @@ async function bootstrap() {
   // so public routes (login, health, webhooks) keep working. This gives every
   // route — including those registered by plugins — a consistent `request.user`.
   app.addHook('onRequest', optionalAuthMiddleware);
+  app.addHook('preHandler', strictModuleAccess);
 
   await app.register(rateLimit, {
     max: 500,
@@ -167,6 +172,7 @@ async function bootstrap() {
       credentials: true,
     },
   });
+  io.adapter(RbacSocketAdapter);
 
   // Xác thực handshake TRƯỚC mọi handler 'connection': không có token hợp lệ thì
   // kết nối bị từ chối, nên handler bên dưới luôn có socketIdentity().
@@ -202,6 +208,11 @@ async function bootstrap() {
   // + bundle tùy chọn (nếu cài). Xem core/plugin-host.ts + modules/plugins-index.ts.
   const { ctx } = buildContext(app, io);
   await loadPlugins(ctx);
+
+  // Native QC shares this backend/auth. Its feature flag gates every handler;
+  // registration never applies a migration or starts a separate service.
+  const { registerNativeAiQualityControl } = await import('./modules/ai-quality-control/bootstrap.js');
+  await registerNativeAiQualityControl(app);
 
   await app.register(zaloRoutes);
   await app.register(chatRoutes);
@@ -305,7 +316,7 @@ async function bootstrap() {
 
   // Đảm bảo tài khoản admin bootstrap tồn tại (idempotent, non-fatal).
   // Chỉ chạy khi ENV BOOTSTRAP_ADMIN_PHONE/PASSWORD được cấu hình; bỏ qua khi test.
-  if (config.nodeEnv !== 'test') {
+  if (config.nodeEnv !== 'test' && !isolatedQc) {
     try {
       await ensureBootstrapAdmin();
     } catch (err) {
@@ -322,7 +333,7 @@ async function bootstrap() {
     // chỉ ảnh hưởng tính năng gửi ảnh/file, không nên chặn cả app. Trước đây
     // ensureBucket() không được gọi ở đâu cả nên bucket thiếu vẫn boot im lặng rồi
     // chỉ vỡ khi có người gửi ảnh thật (NoSuchBucket).
-    void ensureBucket().then(
+    if (!isolatedQc) void ensureBucket().then(
       () => logger.info(`[storage] provider=${storage.provider} bucket=${storage.bucket} OK`),
       (err: unknown) =>
         logger.warn(
@@ -350,6 +361,7 @@ async function bootstrap() {
     process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
     process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 
+    if (!isolatedQc) {
     startAppointmentReminder(io);
     startZaloHealthCheck();
     startContactIntelligence();
@@ -400,12 +412,17 @@ async function bootstrap() {
       const { startFacebookTokenRefreshCron } = await import('./modules/integrations/providers/facebook/facebook-token-refresh-cron.js');
       startFacebookTokenRefreshCron();
     }
+    }
   } catch (err) {
     logger.error('Failed to start server:', err);
     process.exit(1);
   }
 
   // Reconnect Zalo accounts that have saved sessions
+  if (isolatedQc) {
+    logger.info('[synthetic-qc] Workers, cron, storage probes and Zalo reconnect are disabled');
+    return;
+  }
   try {
     const accounts = await prisma.zaloAccount.findMany({
       where: { sessionData: { not: Prisma.JsonNull }, archivedAt: null, status: { not: 'disconnected' } },

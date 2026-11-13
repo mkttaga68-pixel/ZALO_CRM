@@ -11,6 +11,7 @@
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { canAccessPath } from '@/router/access-policy';
 
 export type SettingsPermission = 'everyone' | 'admin' | 'owner';
 
@@ -62,7 +63,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'users', label: 'Nhân viên', icon: '👤', route: '/settings/rbac/users', permission: 'admin', aliases: ['user', 'sale', 'nhân sự'] },
       { id: 'permission-groups', label: 'Phân quyền', icon: '🛡', route: '/settings/rbac/permission-groups', permission: 'owner', aliases: ['phân quyền', 'permission', 'role', 'vai trò', 'nhóm quyền'] },
       // Phase Admin Purge 2026-10-25 — hoàn tác lần đồng bộ danh sách bạn của 1 nhân viên
-      { id: 'data-purge', label: 'Xoá dữ liệu KH đã đồng bộ', icon: '🧹', route: '/settings/org/data-purge', permission: 'admin', aliases: ['xoá dữ liệu', 'xoa du lieu', 'purge', 'dọn rác', 'hoàn tác đồng bộ', 'sync', 'đồng bộ', 'xoá khách hàng'] },
+      { id: 'data-purge', label: 'Xóa dữ liệu khách hàng', icon: '🧹', route: '/settings/org/data-purge', permission: 'admin', aliases: ['xoá dữ liệu', 'xoa du lieu', 'purge', 'dọn rác', 'hoàn tác đồng bộ', 'sync', 'đồng bộ', 'xoá khách hàng'] },
     ],
   },
 
@@ -109,25 +110,16 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
 
 // ─── Helpers ────────────────────────────────────────────
 
-function meetsPermission(required: SettingsPermission, userRole: string | undefined): boolean {
-  if (required === 'everyone') return true;
-  if (required === 'admin') return userRole === 'admin' || userRole === 'owner';
-  if (required === 'owner') return userRole === 'owner';
-  return false;
-}
-
 export function useSettingsNav() {
   const auth = useAuthStore();
   const route = useRoute();
 
   /** Groups + items đã filter theo role user hiện tại */
   const visibleGroups = computed<SettingsGroup[]>(() => {
-    const role = auth.user?.role;
     return SETTINGS_GROUPS
-      .filter((g) => meetsPermission(g.permission, role))
       .map((g) => ({
         ...g,
-        items: g.items.filter((item) => meetsPermission(item.permission, role)),
+        items: g.items.filter((item) => canAccessPath(item.route, auth.hasGrant)),
       }))
       .filter((g) => g.items.length > 0);
   });
@@ -160,9 +152,7 @@ export function useSettingsNav() {
 
   /** Default route when user lands on /settings */
   const defaultRoute = computed<string>(() => {
-    const role = auth.user?.role;
-    if (meetsPermission('admin', role)) return '/settings/team/users';
-    return '/settings/personal/profile';
+    return visibleGroups.value.flatMap(g => g.items)[0]?.route ?? '/settings/personal/profile';
   });
 
   return { visibleGroups, activeItem, searchItems, defaultRoute };

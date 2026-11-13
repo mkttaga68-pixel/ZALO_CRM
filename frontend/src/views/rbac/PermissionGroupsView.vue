@@ -4,15 +4,14 @@
       <div class="hero-left">
         <h1 class="hero-title">Phân quyền</h1>
         <p class="hero-sub">
-          Ma trận {{ resources.length }} chức năng × {{ actions.length }} hành động ·
-          Chọn nhóm bên trái → tích chọn quyền bên phải · Có thể sao chép quyền giữa các nhóm
+          {{ resources.length }} chức năng chia theo nhóm · Chọn nhóm quyền bên trái → bấm vào từng mục để mở và tích quyền chi tiết · Thay đổi được lưu tự động
         </p>
       </div>
       <div class="hero-actions">
-        <button class="btn-ghost" :disabled="seeding" @click="seedDefaults">
+        <button v-if="auth.user?.role === 'owner' && auth.hasGrant('permission_group', 'create')" class="btn-ghost" :disabled="seeding" @click="seedDefaults">
           {{ seeding ? 'Đang seed...' : '⚙ Seed 7 nhóm mặc định' }}
         </button>
-        <button class="btn-primary" @click="openCreate(null)">
+        <button v-if="canCreateRoot" class="btn-primary" @click="openCreate(null)">
           <span class="btn-icon">+</span> Thêm nhóm
         </button>
       </div>
@@ -37,7 +36,7 @@
       </div>
     </section>
 
-    <div v-if="loading" class="loading-state">
+    <div v-if="loading && !store.permissionGroups.length" class="loading-state">
       <div class="skel-card" v-for="i in 3" :key="i" style="height: 60px"></div>
     </div>
 
@@ -45,7 +44,7 @@
       <div class="empty-icon">🛡</div>
       <h3>Chưa có nhóm quyền nào</h3>
       <p>Bắt đầu bằng seed 7 nhóm mặc định (CEO, Trưởng phòng, Sale Senior, Sale, Marketing, Kế toán, Khách).</p>
-      <button class="btn-primary" :disabled="seeding" @click="seedDefaults">
+      <button v-if="auth.user?.role === 'owner' && auth.hasGrant('permission_group', 'create')" class="btn-primary" :disabled="seeding" @click="seedDefaults">
         {{ seeding ? 'Đang seed...' : '⚙ Seed 7 nhóm mặc định' }}
       </button>
     </div>
@@ -85,7 +84,7 @@
             </div>
           </li>
         </ul>
-        <button class="pg-add-btn" @click="openCreate(null)">+ Thêm nhóm quyền</button>
+        <button v-if="canCreateRoot" class="pg-add-btn" @click="openCreate(null)">+ Thêm nhóm quyền</button>
       </aside>
 
       <!-- RIGHT: matrix -->
@@ -111,7 +110,7 @@
                 </div>
               </div>
             </div>
-            <div class="pg-matrix-actions">
+            <div v-if="canEditSelected" class="pg-matrix-actions">
               <select class="filter-select pg-copy-select" v-model="copyFromId">
                 <option value="">📋 Sao chép quyền từ...</option>
                 <option v-for="g in copyableGroups" :key="g.id" :value="g.id">
@@ -124,64 +123,14 @@
               <button class="btn-ghost btn-sm" @click="tickAll(true)">✓ Tick tất cả</button>
               <button class="btn-ghost btn-sm" @click="tickAll(false)">✗ Bỏ tất cả</button>
             </div>
+            <div v-if="auth.hasGrant('permission_group', 'create') && canCreateChild" class="pg-matrix-actions">
+              <button class="btn-ghost btn-sm" @click="openCreate(selected)">+ Thêm nhóm con</button>
+            </div>
           </div>
 
-          <!-- Matrix table -->
-          <div class="pg-matrix-wrap">
-            <table class="pg-matrix">
-              <thead>
-                <tr>
-                  <th class="th-resource">Chức năng</th>
-                  <th v-for="a in actions" :key="a" class="th-action">
-                    <div class="th-action-label">{{ actionLabel(a) }}</div>
-                    <button
-                      class="th-bulk-btn"
-                      :title="`Tick toàn bộ cột ${actionLabel(a)}`"
-                      @click="tickColumn(a)"
-                    >⇧ All</button>
-                  </th>
-                  <th class="th-row-bulk">Tất cả</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="r in resources"
-                  :key="r"
-                  :class="{ 'row-full': rowFull(r), 'row-empty': rowEmpty(r), 'row-module-off': isModuleOff(r) }"
-                >
-                  <td class="cell-resource">
-                    <span class="resource-icon">{{ resourceIcon(r) }}</span>
-                    <span class="resource-label">{{ resourceLabel(r) }}</span>
-                    <span
-                      v-if="isModuleOff(r)"
-                      class="resource-off-tag"
-                      :title="`Tắt vì ${resourceLabel(moduleOf(r)!)} đang tắt — bật dòng đó để các ô dưới đây có hiệu lực.`"
-                    >⛔ module tắt</span>
-                    <span class="resource-count">{{ rowCount(r) }}/{{ (resourceActions[r] ?? []).length }}</span>
-                  </td>
-                  <td v-for="a in actions" :key="a" class="cell-check">
-                    <label
-                      v-if="(resourceActions[r] ?? []).includes(a)"
-                      class="at-checkbox"
-                      :class="{ checked: !!selected.grants?.[r]?.[a] }"
-                    >
-                      <input
-                        type="checkbox"
-                        :checked="!!selected.grants?.[r]?.[a]"
-                        :disabled="saving"
-                        @change="toggleGrant(r, a, ($event.target as HTMLInputElement).checked)"
-                      />
-                      <span class="at-checkbox-box">✓</span>
-                    </label>
-                    <span v-else class="cell-na">—</span>
-                  </td>
-                  <td class="cell-row-bulk">
-                    <button class="th-bulk-btn" :title="`Tick toàn bộ hàng ${resourceLabel(r)}`" @click="tickRow(r)">⇨ All</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <!-- Mục quyền lớn → bấm để mở các quyền nhỏ -->
+          <PermissionAccordion :resources="resources" :resource-actions="resourceActions" :grants="selected.grants" :disabled="saving || !canEditSelected" @change="saveGrants" />
+          <p v-if="!canEditSelected" class="pg-readonly-hint">Bạn chỉ xem được quyền của nhóm này.</p>
 
           <!-- Save indicator -->
           <div class="pg-save-bar" :class="{ 'is-saving': saving, 'is-saved': justSaved }">
@@ -191,7 +140,7 @@
           </div>
 
           <!-- Danger zone for custom groups -->
-          <div v-if="!selected.isSystem" class="pg-danger-zone">
+          <div v-if="!selected.isSystem && selected.canDelete" class="pg-danger-zone">
             <div>
               <strong>Xóa nhóm "{{ selected.name }}"</strong>
               <p class="pg-danger-hint">Chỉ xóa được khi nhóm rỗng (không user, không nhóm con).</p>
@@ -247,8 +196,11 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRbacStore, type PermissionGroupNode, type RbacUser } from '@/stores/rbac';
 import { api } from '@/api/index';
+import { useAuthStore } from '@/stores/auth';
+import PermissionAccordion from '@/components/rbac/PermissionAccordion.vue';
 
 const store = useRbacStore();
+const auth = useAuthStore();
 const allUsers = ref<RbacUser[]>([]);
 const searchQ = ref('');
 const seeding = ref(false);
@@ -270,7 +222,6 @@ onMounted(async () => {
 });
 
 const resources = computed(() => store.matrixMeta?.resources ?? []);
-const actions = computed(() => store.matrixMeta?.actions ?? []);
 const resourceActions = computed(() => store.matrixMeta?.resourceActions ?? {});
 const totalSlots = computed(() => {
   let total = 0;
@@ -305,6 +256,21 @@ const filteredGroups = computed(() => {
 });
 
 const selected = computed(() => flatGroupsList.value.find((g) => g.id === selectedId.value));
+const canEditSelected = computed(() => !!selected.value?.canEdit);
+const canCreateRoot = computed(() => auth.hasGrant('permission_group', 'create') && !!store.matrixMeta?.authority?.canCreateRoot);
+const canCreateChild = computed(() => {
+  const parentId = selected.value?.id;
+  if (!parentId || !auth.hasGrant('permission_group', 'create')) return false;
+  if (store.matrixMeta?.authority?.canCreateRoot) return true;
+  const actorGroupId = store.matrixMeta?.authority?.actorGroupId;
+  if (!actorGroupId) return false;
+  let current = flatGroupsList.value.find((group) => group.id === parentId);
+  while (current) {
+    if (current.id === actorGroupId) return true;
+    current = flatGroupsList.value.find((group) => group.id === current?.parentId);
+  }
+  return false;
+});
 
 const copyableGroups = computed(() =>
   flatGroupsList.value.filter((g) => g.id !== selectedId.value)
@@ -332,40 +298,6 @@ watch(
   }
 );
 
-// ─── Labels ───
-const ACTION_LABELS: Record<string, string> = {
-  access: 'Truy cập',
-  create: 'Thêm mới',
-  edit: 'Chỉnh sửa',
-  delete: 'Xóa',
-  approve: 'Duyệt',
-  pay: 'Thanh toán',
-  view_all: 'Xem tất cả',
-};
-function actionLabel(a: string) { return ACTION_LABELS[a] ?? a; }
-
-const RESOURCE_LABELS: Record<string, { icon: string; label: string }> = {
-  department: { icon: '🏢', label: 'Phòng ban' },
-  user: { icon: '👤', label: 'Người dùng' },
-  permission_group: { icon: '🛡', label: 'Nhóm quyền' },
-  conversation: { icon: '💬', label: 'Hội thoại' },
-  contact: { icon: '👥', label: 'Khách hàng' },
-  friend: { icon: '🫂', label: 'Friends Zalo' },
-  posting: { icon: '📢', label: 'Đăng bài (Đăng nhóm / Chào hàng)' },
-  bot_auto: { icon: '🤖', label: 'Bot-Auto (công tắc tổng)' },
-  customer_list: { icon: '📋', label: 'Tệp khách hàng' },
-  broadcast: { icon: '📢', label: 'Chiến dịch' },
-  sequence: { icon: '🔁', label: 'Sequence' },
-  trigger: { icon: '⚡', label: 'Trigger' },
-  block: { icon: '🧱', label: 'Message Block' },
-  zalo_account: { icon: '🟢', label: 'Nick Zalo' },
-  webhook: { icon: '🔌', label: 'Webhook' },
-  engagement_score: { icon: '📊', label: 'Engagement / Score' },
-  audit_log: { icon: '📜', label: 'Audit Log' },
-  settings: { icon: '⚙', label: 'Cài đặt' },
-};
-function resourceLabel(r: string) { return RESOURCE_LABELS[r]?.label ?? r; }
-function resourceIcon(r: string) { return RESOURCE_LABELS[r]?.icon ?? '•'; }
 
 // ─── Grants helpers ───
 function grantsActive(g: PermissionGroupNode): number {
@@ -394,41 +326,6 @@ function accentByDepth(d: number): string {
   return ['#181d26', '#aa2d00', '#0a2e0e', '#d9a441', '#1b61c9'][Math.min(d, 4)];
 }
 
-function rowCount(r: string): number {
-  if (!selected.value) return 0;
-  const row = selected.value.grants?.[r];
-  if (!row) return 0;
-  let c = 0;
-  for (const a of resourceActions.value[r] ?? []) if (row[a]) c++;
-  return c;
-}
-function rowFull(r: string): boolean {
-  const max = (resourceActions.value[r] ?? []).length;
-  return max > 0 && rowCount(r) === max;
-}
-function rowEmpty(r: string): boolean {
-  return rowCount(r) === 0;
-}
-
-// ─── Module gate (Bot-Auto) ───
-// Mirror RESOURCE_MODULE ở backend: 5 resource con chỉ có hiệu lực khi công tắc
-// tổng 'bot_auto' đang bật. Hiển thị mờ + nhãn "module tắt" để admin không tick
-// nhầm rồi tưởng đã cấp quyền.
-const RESOURCE_MODULE: Record<string, string> = {
-  customer_list: 'bot_auto',
-  broadcast: 'bot_auto',
-  sequence: 'bot_auto',
-  trigger: 'bot_auto',
-  block: 'bot_auto',
-};
-function moduleOf(r: string): string | undefined {
-  return RESOURCE_MODULE[r];
-}
-function isModuleOff(r: string): boolean {
-  const m = RESOURCE_MODULE[r];
-  if (!m || !selected.value) return false;
-  return selected.value.grants?.[m]?.access !== true;
-}
 
 // ─── Grant mutations (auto-save) ───
 let saveTimer: any;
@@ -448,13 +345,6 @@ async function saveGrants(newGrants: Record<string, Record<string, boolean>>) {
   }
 }
 
-async function toggleGrant(r: string, a: string, v: boolean) {
-  if (!selected.value) return;
-  const newGrants = JSON.parse(JSON.stringify(selected.value.grants ?? {}));
-  if (!newGrants[r]) newGrants[r] = {};
-  newGrants[r][a] = v;
-  await saveGrants(newGrants);
-}
 
 async function tickAll(value: boolean) {
   if (!selected.value) return;
@@ -470,33 +360,6 @@ async function tickAll(value: boolean) {
   await saveGrants(newGrants);
 }
 
-async function tickRow(r: string) {
-  if (!selected.value) return;
-  const newGrants = JSON.parse(JSON.stringify(selected.value.grants ?? {}));
-  const allOn = rowFull(r);
-  newGrants[r] = newGrants[r] ?? {};
-  for (const a of resourceActions.value[r] ?? []) {
-    newGrants[r][a] = !allOn;
-  }
-  await saveGrants(newGrants);
-}
-
-async function tickColumn(a: string) {
-  if (!selected.value) return;
-  const newGrants = JSON.parse(JSON.stringify(selected.value.grants ?? {}));
-  // Check if column fully on
-  let allOn = true;
-  for (const r of resources.value) {
-    if (!(resourceActions.value[r] ?? []).includes(a)) continue;
-    if (!newGrants[r]?.[a]) { allOn = false; break; }
-  }
-  for (const r of resources.value) {
-    if (!(resourceActions.value[r] ?? []).includes(a)) continue;
-    if (!newGrants[r]) newGrants[r] = {};
-    newGrants[r][a] = !allOn;
-  }
-  await saveGrants(newGrants);
-}
 
 async function doCopyFrom() {
   if (!selected.value || !copyFromId.value) return;
@@ -574,6 +437,7 @@ async function seedDefaults() {
 /* PermissionGroupsView — Getfly-style 2-col layout + Airtable theme */
 
 .hero-actions { display: flex; gap: 8px; }
+.pg-readonly-hint { margin: 10px 2px 0; font-size: 12px; color: #6b7280; }
 
 .pg-layout {
   display: grid;
@@ -926,4 +790,11 @@ async function seedDefaults() {
   white-space: nowrap;
 }
 .btn-danger:hover { background: #aa2d00; color: white; }
+@media (max-width: 1100px) {
+  .pg-layout { grid-template-columns: 1fr; }
+  .pg-sidebar { border-right: 0; border-bottom: 1px solid #e0e2e6; }
+  .pg-group-list { max-height: 260px; overflow-y: auto; }
+  .pg-matrix-head { flex-wrap: wrap; }
+  .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 </style>

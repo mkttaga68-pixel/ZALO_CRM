@@ -60,6 +60,8 @@ export const useAuthStore = defineStore('auth', () => {
   };
   const hasGrant = (resource: string, action = 'access') => {
     if (isOwner.value) return true;
+    if (resource === 'contact_data_purge' && user.value?.role !== 'admin') return false;
+    if (user.value?.grants?.[resource]?.access !== true) return false;
     if (user.value?.grants?.[resource]?.[action] !== true) return false;
     const moduleResource = RESOURCE_MODULE[resource];
     if (moduleResource && user.value?.grants?.[moduleResource]?.access !== true) return false;

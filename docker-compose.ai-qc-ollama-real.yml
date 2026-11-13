@@ -1,0 +1,51 @@
+# Owner decision 2026-11-11: AIQC analyses REAL CRM conversations with the LOCAL Ollama model only.
+# Manual per-conversation (preview + explicit confirmation), tenant ASLAN only, 7-day result retention,
+# no OpenAI / no outbound, no auto-monitoring. Merge LAST after the three active zl-crm files.
+# Image = production snapshot e3688c05 + new AIQC backend module + AIQC frontend (non-AIQC files verified identical).
+services:
+  app:
+    # 2026-11-11 v4: ignore synthetic policy conflicts when publishing real tenant rules.
+    # Parent v3: two-threshold resource guard, tenant vault, per-finding evidence downgrade.
+    # Rollback v3: zl-crm-app@sha256:d0e878e8ac4f8cfab668dc52008d06e2fc601b192c830fcc2da994901622194f
+    # Rollback v2: zl-crm-app@sha256:ab60afe59d6cc608e7a18989282881dd329f2eea3cfdbeb54a46288b88548470
+    # Rollback v1: zl-crm-app@sha256:feb19c21a24143d20a4de45cd9e7d712f49acac3788aae0a4b3626e160b27583
+    image: zl-crm-app@sha256:ef2087c0527b9c83862973dbead5586c61864943dc5dc1ea2ad391a0182002da
+    pull_policy: never
+    build: !reset null
+    healthcheck:
+      test: ["CMD", "node", "scripts/readiness-probe.cjs"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    environment:
+      AI_QC_ENABLED: "true"
+      AI_QC_STORAGE: application
+      AI_QC_SANDBOX_RUNTIME: "false"
+      AI_QC_OPENAI_REMOVED: "true"
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"
+      AI_QC_AUTO_MONITOR_ENABLED: "false"
+      AI_QC_MANUAL_REAL_TEST_ENABLED: "false"
+      AI_QC_REAL_DATA_ENABLED: "true"
+      AI_QC_REAL_DATA_PILOT_ORG_ID: a236afea-cc9c-4de8-81c0-ee5923385b2e
+      AI_QC_OLLAMA_ENABLED: "true"
+      AI_QC_OLLAMA_REAL_DATA_ENABLED: "true"
+      AI_QC_MANUAL_RETENTION_ENABLED: "true"
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: qwen3:4b-instruct
+      AI_QC_RESOURCE_GUARD_REQUIRED: "true"
+      AI_QC_HOST_RESOURCE_FILE: /run/aiqc-runtime/host-resources.json
+      AI_QC_OLLAMA_KILL_SWITCH_FILE: /run/aiqc-runtime/STOP
+      AI_QC_VAULT_ROOTS_BY_TENANT: '{"a236afea-cc9c-4de8-81c0-ee5923385b2e":["/run/aiqc/obsidian"]}'
+    volumes:
+      - type: bind
+        source: C:/Users/ADMIN/Downloads/ZALO_CRM_AI_BRAIN
+        target: /run/aiqc/obsidian
+        read_only: true
+      # Telemetry + kill switch ONLY (never the parent folder: it holds database backups).
+      - type: bind
+        source: C:/ProgramData/ZaloCRM/AIQC/runtime
+        target: /run/aiqc-runtime
+        read_only: true

@@ -28,6 +28,7 @@ import { setRuntimePolicy } from './runtime-policy.js';
 import { zaloMessagingImpl } from './zalo-messaging-impl.js';
 import { internalContactImpl } from './internal-contact-impl.js';
 import { zaloDirectoryImpl } from './zalo-directory-impl.js';
+import { syntheticQcSandbox } from '../modules/ai-quality-control/sandbox-profile.js';
 
 export interface BuildContextResult {
   ctx: PluginContext;
@@ -36,6 +37,7 @@ export interface BuildContextResult {
 }
 
 export function buildContext(app: FastifyInstance, io: SocketServer): BuildContextResult {
+  const isolatedQc = syntheticQcSandbox();
   const capabilities = createCapabilityRegistry();
   const policy = createPolicyRegistry();
   const scope = createScopeRegistry();
@@ -67,7 +69,7 @@ export function buildContext(app: FastifyInstance, io: SocketServer): BuildConte
     scope,
     registerCron: (job) => {
       crons.push(job);
-      job.start();
+      if (!isolatedQc) job.start();
     },
   };
 

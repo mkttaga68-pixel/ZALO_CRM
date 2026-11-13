@@ -1,0 +1,24 @@
+# AIQC Nightly Learning — deployment overlay (PREPARED, NOT APPLIED).
+# Apply as the LAST overlay after the current stack files, only following
+# AIQC_NIGHTLY_LEARNING_PRODUCTION_READINESS.md. Everything stays OFF by default:
+#   - AI_QC_NIGHTLY_LEARNING_ENABLED=false  → scheduler never starts
+#   - AI_QC_PRODUCTION_GO_APPROVED=false    → on NODE_ENV=production the gate blocks with PRODUCTION_NO_GO
+# Changing either value requires the written approvals listed in the readiness report (BLOCKED items).
+# No schema migration is needed: drafts live in the existing native_ai_qc_workspace JSON payload.
+services:
+  app:
+    environment:
+      AI_QC_NIGHTLY_LEARNING_ENABLED: ${AI_QC_NIGHTLY_LEARNING_ENABLED:-false}
+      # Local time HH:MM, must be >= 22:00 (gate rejects earlier values).
+      AI_QC_NIGHTLY_LEARNING_SCHEDULE: ${AI_QC_NIGHTLY_LEARNING_SCHEDULE:-22:00}
+      AI_QC_NIGHTLY_LEARNING_TZ: ${AI_QC_NIGHTLY_LEARNING_TZ:-Asia/Ho_Chi_Minh}
+      # JSON {orgId, departmentIds[], approvedBy, approvedAt, reference}; empty = DATA_SCOPE_NOT_APPROVED.
+      AI_QC_NIGHTLY_LEARNING_SCOPE_APPROVAL: ${AI_QC_NIGHTLY_LEARNING_SCOPE_APPROVAL:-}
+      # Never set to true without the signed GO decision.
+      AI_QC_PRODUCTION_GO_APPROVED: ${AI_QC_PRODUCTION_GO_APPROVED:-false}
+      # Writable staging folder for Learning Draft markdown. Must NOT be inside /run/aiqc/obsidian (read-only vault).
+      AI_QC_LEARNING_OUTBOX_DIR: /var/lib/zalo-crm/aiqc-learning-outbox
+    volumes:
+      - type: bind
+        source: C:/ProgramData/ZaloCRM/AIQC/learning-outbox
+        target: /var/lib/zalo-crm/aiqc-learning-outbox

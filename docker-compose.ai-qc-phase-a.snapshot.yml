@@ -1,0 +1,28 @@
+# Phase A (AI OFF) — applied 2026-11-11 by owner decision. Merge LAST after the three active zl-crm files.
+# Image: secret-free rootfs snapshot of the container that was running image config sha256:875af855e104
+# (original image had been deleted from the image store; /app file hashes verified identical).
+services:
+  app:
+    image: zl-crm-app@sha256:e3688c05dc3d785c0e7ce4667c3338d34e99d0aeb50896e3a790cad7fa6de5c4
+    pull_policy: never
+    build: !reset null
+    # docker import does not carry HEALTHCHECK; this restores the original image's probe exactly.
+    healthcheck:
+      test: ["CMD", "node", "scripts/readiness-probe.cjs"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    environment:
+      AI_QC_ENABLED: "false"
+      AI_QC_OLLAMA_ENABLED: "false"
+      AI_QC_STORAGE: application
+      AI_QC_SANDBOX_RUNTIME: "false"
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"
+      AI_QC_REAL_DATA_ENABLED: "false"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"
+      AI_QC_AUTO_MONITOR_ENABLED: "false"
+      AI_QC_MANUAL_REAL_TEST_ENABLED: "false"
+      AI_QC_MANUAL_RETENTION_ENABLED: "false"
+      AI_QC_OPENAI_REMOVED: "true"

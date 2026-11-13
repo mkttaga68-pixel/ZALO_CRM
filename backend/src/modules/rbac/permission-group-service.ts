@@ -8,6 +8,7 @@
  * phải invalidate (xem D8 RBAC middleware).
  */
 import { randomUUID } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { sanitizeGrants, hasGrant, type GrantsJson, type Resource, type Action } from './permission-types.js';
 
@@ -100,14 +101,14 @@ export async function createPermissionGroup(input: {
   parentId: string | null;
   cloneFromId?: string;
   grants?: GrantsJson;
-}): Promise<{ id: string; name: string; grants: GrantsJson }> {
+}, db: any = prisma): Promise<{ id: string; name: string; grants: GrantsJson }> {
   if (!input.name?.trim()) throw new Error('Tên nhóm quyền không được trống');
 
   let grants: GrantsJson = sanitizeGrants(input.grants ?? {});
 
   // Clone từ group khác
   if (input.cloneFromId) {
-    const src = await prisma.permissionGroup.findFirst({
+    const src = await db.permissionGroup.findFirst({
       where: { id: input.cloneFromId, orgId: input.orgId },
       select: { grants: true },
     });
@@ -117,7 +118,7 @@ export async function createPermissionGroup(input: {
 
   // Validate parent
   if (input.parentId) {
-    const parent = await prisma.permissionGroup.findFirst({
+    const parent = await db.permissionGroup.findFirst({
       where: { id: input.parentId, orgId: input.orgId, archivedAt: null },
       select: { id: true },
     });
@@ -125,7 +126,7 @@ export async function createPermissionGroup(input: {
   }
 
   const id = randomUUID();
-  await prisma.permissionGroup.create({
+  await db.permissionGroup.create({
     data: {
       id,
       orgId: input.orgId,
@@ -145,8 +146,8 @@ export async function updatePermissionGroup(input: {
   parentId?: string | null;
   grants?: GrantsJson;
   displayOrder?: number;
-}): Promise<{ id: string; name: string; grants: GrantsJson }> {
-  const existing = await prisma.permissionGroup.findFirst({
+}, transaction?: any): Promise<{ id: string; name: string; grants: GrantsJson }> {
+  const existing = await (transaction ?? prisma).permissionGroup.findFirst({
     where: { id: input.id, orgId: input.orgId, archivedAt: null },
   });
   if (!existing) throw new Error('Nhóm quyền không tồn tại');
@@ -170,7 +171,7 @@ export async function updatePermissionGroup(input: {
 
   // FIX codex review #5: validate parent thuộc đúng org + active TRƯỚC khi anti-cycle.
   // FIX codex review #2: wrap check + update trong 1 tx atomic.
-  return await prisma.$transaction(async (tx) => {
+  const update = async (tx: any) => {
     if (input.parentId !== undefined && input.parentId !== null) {
       const parent = await tx.permissionGroup.findFirst({
         where: { id: input.parentId, orgId: input.orgId, archivedAt: null },
@@ -198,7 +199,8 @@ export async function updatePermissionGroup(input: {
       name: updated.name,
       grants: (updated.grants ?? {}) as GrantsJson,
     };
-  });
+  };
+  return transaction ? update(transaction) : prisma.$transaction(update);
 }
 
 /**
@@ -209,7 +211,7 @@ async function checkIsDescendant(
   orgId: string,
   descendantId: string,
   ancestorId: string,
-  client: typeof prisma | Parameters<Parameters<typeof prisma.$transaction>[0]>[0] = prisma,
+  client: any = prisma,
 ): Promise<boolean> {
   let currentId: string | null = descendantId;
   let hops = 0;
@@ -226,10 +228,10 @@ async function checkIsDescendant(
   return false;
 }
 
-export async function archivePermissionGroup(orgId: string, id: string): Promise<void> {
+export async function archivePermissionGroup(orgId: string, id: string, transaction?: any): Promise<void> {
   // FIX codex review #7: wrap count + archive trong 1 tx, lock group row → tránh race.
-  await prisma.$transaction(async (tx) => {
-    const rows = await tx.$queryRawUnsafe<Array<{ id: string; is_system: boolean }>>(
+  const archive = async (tx: any) => {
+    const rows = await tx.$queryRawUnsafe(
       `SELECT id, is_system FROM permission_groups
        WHERE id = $1 AND org_id = $2 AND archived_at IS NULL FOR UPDATE`,
       id,
@@ -250,7 +252,8 @@ export async function archivePermissionGroup(orgId: string, id: string): Promise
     }
 
     await tx.permissionGroup.update({ where: { id }, data: { archivedAt: new Date() } });
-  });
+  };
+  if (transaction) await archive(transaction); else await prisma.$transaction(archive);
 }
 
 /**
@@ -272,6 +275,9 @@ export async function userHasGrant(
     },
   });
   if (!user || !user.isActive) return false;
+
+  // A grant alone must never authorize a non-admin to purge customer data.
+  if (resource === 'contact_data_purge' && !['owner', 'admin'].includes(user.role)) return false;
 
   // Permission group active
   if (user.permissionGroup && !user.permissionGroup.archivedAt) {

@@ -1,0 +1,6 @@
+const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
+const root=path.resolve(__dirname,'..'),evidence=path.resolve(root,'..','aiqc-monitoring-test-evidence-20261101');fs.mkdirSync(evidence,{recursive:true});
+const env={};for(const key of ['SystemRoot','WINDIR','ComSpec','PATH','Path','PATHEXT','NUMBER_OF_PROCESSORS','PROCESSOR_ARCHITECTURE'])if(process.env[key])env[key]=process.env[key];
+Object.assign(env,{NODE_ENV:'test',TZ:'UTC',TEMP:evidence,TMP:evidence,QC_TEST_ROOT:evidence,AI_QC_REAL_API_ENABLED:'false',AI_QC_REAL_DATA_ENABLED:'false',AI_QC_OUTBOUND_TEST_APPROVED:'false',AI_QC_REAL_DATA_OUTBOUND_APPROVED:'false',DATABASE_URL:'postgresql://synthetic:synthetic@127.0.0.1:1/never_connect'});
+const frontend=process.argv.includes('--frontend');fs.writeFileSync(path.join(evidence,'isolation.json'),JSON.stringify({secretInheritance:false,dotenv:false,productionAccess:false,outbound:'denied by setup',environmentNames:Object.keys(env).sort()},null,2));
+const result=spawnSync(process.execPath,[path.join(root,'backend/node_modules/vitest/vitest.mjs'),'run','--config',frontend?'vitest.native-ai-qc-monitoring.config.mjs':'vitest.native-ai-qc-monitoring.config.ts'],{cwd:path.join(root,frontend?'frontend':'backend'),env,stdio:'inherit'});process.exit(result.status??1);

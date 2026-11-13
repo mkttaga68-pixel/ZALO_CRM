@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      args:
+        VITE_AI_QC_ENABLED: ${VITE_AI_QC_ENABLED:-false}
     container_name: zalo-crm-app
     restart: unless-stopped
     ports:
@@ -20,6 +22,13 @@ services:
       # Phase 7 overnight test: STUB mode prevents Zalo SDK calls.
       # Set to 'false' or remove for REAL mode.
       - AUTOMATION_STUB_MODE=${AUTOMATION_STUB_MODE:-false}
+      # Native QC shares this backend, auth and Prisma. No migration runs at boot.
+      - AI_QC_ENABLED=${AI_QC_ENABLED:-false}
+      - AI_QC_STORAGE=${AI_QC_STORAGE:-application}
+      - AI_QC_REAL_API_ENABLED=${AI_QC_REAL_API_ENABLED:-false}
+      - AI_QC_OUTBOUND_TEST_APPROVED=${AI_QC_OUTBOUND_TEST_APPROVED:-false}
+      - AI_QC_REAL_DATA_ENABLED=${AI_QC_REAL_DATA_ENABLED:-false}
+      - AI_QC_REAL_DATA_OUTBOUND_APPROVED=${AI_QC_REAL_DATA_OUTBOUND_APPROVED:-false}
     depends_on:
       db:
         condition: service_healthy

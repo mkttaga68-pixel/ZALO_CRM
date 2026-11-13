@@ -1,0 +1,34 @@
+# REVIEW ONLY: not applied. Image tested in isolated container; restart not authorized.
+services:
+  app:
+    image: zl-crm-app@sha256:5e4283c273552a4fa92e5b00d0f35bcae63967633d4744158389fd9dcbe5e42a
+    pull_policy: never
+    volumes:
+      - type: bind
+        source: C:/Users/ADMIN/Downloads/ZALO_CRM_AI_BRAIN
+        target: /knowledge/obsidian
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: aiqc_openai_control
+        target: /var/lib/zalo-crm/aiqc-openai-control
+    tmpfs:
+      - /run/secrets:rw,noexec,nosuid,size=16k,mode=0700
+    environment:
+      AI_QC_ENABLED: "false"
+      AI_QC_STORAGE: application
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"
+      AI_QC_REAL_DATA_ENABLED: "false"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"
+      AI_QC_AUTO_MONITOR_ENABLED: "false"
+      AI_QC_OPENAI_ORG_ID: a236afea-cc9c-4de8-81c0-ee5923385b2e
+      AI_QC_VAULT_ROOTS_BY_TENANT: '{"a236afea-cc9c-4de8-81c0-ee5923385b2e":["/knowledge/obsidian"]}'
+      OPENAI_PROJECT_ID: proj_6yDB6qP8X45ofaQO99BW2Bqy
+      OPENAI_MODEL: gpt-6-luna
+      OPENAI_API_KEY_FILE: /run/secrets/zlcrm_openai_key
+      AI_QC_OPENAI_CONTROL_DIR: /var/lib/zalo-crm/aiqc-openai-control/project
+      AI_QC_MODEL_CAPABILITIES: '{"gpt-6-luna":{"responses":true,"structuredOutputs":true,"reasoningEffort":"none"}}'
+volumes:
+  aiqc_openai_control:

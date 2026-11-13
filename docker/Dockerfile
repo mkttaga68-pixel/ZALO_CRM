@@ -1,13 +1,14 @@
 # ── Stage 1: Build frontend ──────────────────────────────────────────────────
-FROM node:20-alpine AS frontend-builder
+FROM node:22-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --legacy-peer-deps
 COPY frontend/ ./
-RUN npm run build
+ARG VITE_AI_QC_ENABLED=false
+RUN VITE_AI_QC_ENABLED=${VITE_AI_QC_ENABLED} npm run build
 
 # ── Stage 2: Build backend ───────────────────────────────────────────────────
-FROM node:20-alpine AS backend-builder
+FROM node:22-alpine AS backend-builder
 WORKDIR /app/backend
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci
@@ -16,7 +17,7 @@ RUN DATABASE_URL="postgresql://build:build@localhost:5432/build" npx prisma gene
 RUN npm run build
 
 # ── Stage 3: Production image ────────────────────────────────────────────────
-FROM node:20-alpine
+FROM node:22-alpine
 RUN apk add --no-cache tini ffmpeg
 WORKDIR /app
 
@@ -26,12 +27,14 @@ COPY --from=backend-builder /app/backend/node_modules /app/node_modules
 COPY --from=backend-builder /app/backend/prisma     /app/prisma
 COPY --from=backend-builder /app/backend/prisma.config.ts /app/prisma.config.ts
 COPY --from=backend-builder /app/backend/package.json /app/package.json
+COPY --from=backend-builder /app/backend/fixtures/ai-quality-control/vault /app/fixtures/ai-quality-control/vault
 COPY --from=frontend-builder /app/frontend/dist     /app/static
 
 RUN mkdir -p /var/lib/zalo-crm/files
 COPY scripts/readiness-probe.cjs /app/scripts/readiness-probe.cjs
 COPY scripts/bot-auto-backfill.cjs /app/scripts/bot-auto-backfill.cjs
 COPY scripts/manual-posting-migrate.cjs /app/scripts/manual-posting-migrate.cjs
+COPY scripts/native-ai-qc-migrate.cjs /app/scripts/native-ai-qc-migrate.cjs
 
 EXPOSE 3000
 ENTRYPOINT ["/sbin/tini", "--"]

@@ -17,6 +17,7 @@
  */
 import {
   S3Client,
+  GetObjectCommand,
   PutObjectCommand,
   HeadBucketCommand,
   CreateBucketCommand,
@@ -99,6 +100,7 @@ export interface S3Storage {
   keyFromUrl(url: string): string | null;
   isOwnStorageUrl(value: string): boolean;
   downloadCandidates(url: string): string[];
+  downloadOwnBuffer(url: string, maxBytes: number, timeoutMs: number): Promise<{ buffer: Buffer; mimeType: string } | null>;
   uploadBuffer(buffer: Buffer, mimeType: string, originalName?: string): Promise<UploadResult>;
   ensureBucket(): Promise<void>;
 }
@@ -177,6 +179,35 @@ export function createS3Storage(options: S3StorageOptions): S3Storage {
     return [...new Set(candidates)];
   }
 
+  async function downloadOwnBuffer(url: string, maxBytes: number, timeoutMs: number) {
+    const parsed = new URL(url);
+    if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('Invalid media URL');
+    // Match only configured object roots. Never fetch an arbitrary internal URL.
+    const key = keyFromUrl(parsed.origin + parsed.pathname);
+    if (!key) return null;
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
+      decodeURIComponent(key).split('/').some(part => part === '.' || part === '..' || part.includes('\0'))) throw new Error('Invalid storage download');
+    const signal = AbortSignal.timeout(timeoutMs);
+    const result = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: key }), { abortSignal: signal });
+    const body = result.Body as (AsyncIterable<Uint8Array> & { destroy?: () => void }) | undefined;
+    if (!body || typeof body[Symbol.asyncIterator] !== 'function') throw new Error('Storage body unavailable');
+    const abort = () => body.destroy?.();
+    signal.addEventListener('abort', abort, { once: true });
+    const chunks: Buffer[] = []; let size = 0;
+    try {
+      signal.throwIfAborted();
+      if ((result.ContentLength ?? 0) > maxBytes) throw new Error('Media exceeds size limit');
+      for await (const chunk of body) {
+        signal.throwIfAborted();
+        const buffer = Buffer.from(chunk); size += buffer.length;
+        if (size > maxBytes) throw new Error('Media exceeds size limit');
+        chunks.push(buffer);
+      }
+      if (!size) throw new Error('Empty media');
+      return { buffer: Buffer.concat(chunks), mimeType: (result.ContentType ?? '').split(';')[0]!.trim() };
+    } finally { signal.removeEventListener('abort', abort); body.destroy?.(); }
+  }
+
   async function uploadBuffer(
     buffer: Buffer,
     mimeType: string,
@@ -240,6 +271,7 @@ export function createS3Storage(options: S3StorageOptions): S3Storage {
     keyFromUrl,
     isOwnStorageUrl,
     downloadCandidates,
+    downloadOwnBuffer,
     uploadBuffer,
     ensureBucket,
   };

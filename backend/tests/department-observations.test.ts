@@ -1,0 +1,17 @@
+import {describe,it,expect} from 'vitest';
+import {initialWorkspace,type Actor,type AnalysisRun} from '../src/modules/ai-quality-control/contracts.js';
+import {canObserveDepartmentRun,observationResult} from '../src/modules/ai-quality-control/observation-presentation.js';
+const actor:Actor={id:'reviewer-a',orgId:'org-a',permissions:['access'],departmentIds:['dept-a']};
+function fixture(){return {id:'run-a',orgId:'org-a',createdBy:'admin-a',createdAt:new Date().toISOString(),status:'COMPLETED',reviewStatus:'PENDING',departmentObservation:{departmentId:'dept-a',recipientUserIds:['reviewer-a'],seenBy:[]},manualRetention:{days:7,expiresAt:new Date(Date.now()+3600000).toISOString(),approvedBy:'admin-a'},knowledgeSnapshot:[],missingContext:[],conversation:{id:'chat-a',messages:[{id:'m1',text:'Customer words',role:'CUSTOMER',actorId:null,attribution:'UNKNOWN',occurredAt:new Date().toISOString()},{id:'m2',text:'Verified staff reply',role:'HUMAN',actorId:'staff-a',attribution:'VERIFIED',occurredAt:new Date().toISOString()},{id:'m3',text:'Unknown sender',role:'HUMAN',actorId:'unknown-a',attribution:'UNKNOWN',occurredAt:new Date().toISOString()}]},output:{summary:'Needs review',findings:[{type:'COURTESY',status:'POTENTIAL_ISSUE',messageIds:['m2'],citations:[],missingContext:[],explanation:'Compare with policy.'},{type:'INSULT',status:'ABSTAIN',messageIds:['m1','m3'],citations:[],missingContext:[],explanation:'Unverified attribution.'}]}} as unknown as AnalysisRun;}
+describe('department observer access and evidence presentation',()=>{
+ it('requires both snapshot and current recipient assignment plus tenant permission',()=>{
+   const run=fixture(),state=initialWorkspace();expect(canObserveDepartmentRun(actor,state,run,['reviewer-a'])).toBe(true);
+   expect(canObserveDepartmentRun(actor,state,run,[])).toBe(false);
+   expect(canObserveDepartmentRun({...actor,id:'other'},state,run,['other'])).toBe(false);
+   expect(canObserveDepartmentRun({...actor,orgId:'org-b'},state,run,['reviewer-a'])).toBe(false);
+   expect(canObserveDepartmentRun({...actor,permissions:[]},state,run,['reviewer-a'])).toBe(false);
+ });
+ it('hides expired and invalid-retention evidence',()=>{const run=fixture();run.manualRetention!.expiresAt='invalid';expect(canObserveDepartmentRun(actor,initialWorkspace(),run,['reviewer-a'])).toBe(false);run.manualRetention!.expiresAt=new Date(Date.now()-1).toISOString();expect(canObserveDepartmentRun(actor,initialWorkspace(),run,['reviewer-a'])).toBe(false);});
+ it('rechecks current document ACL instead of granting all observers view_all',()=>{const run=fixture(),state=initialWorkspace();const doc={id:'d1',documentId:'d',orgId:'org-a',status:'APPROVED',revision:1,approvedAt:new Date().toISOString(),departmentIds:['dept-a']};run.knowledgeSnapshot=[doc as any];state.documents=[{...doc,id:'d2',revision:2,departmentIds:['dept-b']} as any];expect(canObserveDepartmentRun(actor,state,run,['reviewer-a'])).toBe(false);});
+ it('names staff only from verified messages cited by the specific finding',()=>{const r=observationResult(fixture(),{'staff-a':'Nhân viên A','unknown-a':'Unverified'});expect(r.findings[0]!.employees).toEqual([{id:'staff-a',name:'Nhân viên A'}]);expect(r.findings[0]!.evidence[0]!.text).toBe('Verified staff reply');expect(r.findings[1]!.employees).toEqual([]);expect(r.findings[1]!.evidence.every(m=>m.employee===null)).toBe(true);expect(r.employees).toEqual([{id:'staff-a',name:'Nhân viên A'}]);});
+});

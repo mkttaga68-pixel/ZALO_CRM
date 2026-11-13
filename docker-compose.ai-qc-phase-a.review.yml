@@ -1,0 +1,30 @@
+# REVIEW ONLY. Combine with the original zl-crm Compose files after all gates pass.
+# Requires a separately built and reviewed immutable image reference.
+services:
+  app:
+    image: ${AI_QC_PHASE_A_IMAGE:?Set the reviewed immutable phase-A image digest}
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        # Keep the dashboard route available; backend AI/data flags below remain OFF.
+        VITE_AI_QC_ENABLED: "true"
+    environment:
+      AI_QC_ENABLED: "false"
+      AI_QC_OLLAMA_ENABLED: "false"
+      AI_QC_STORAGE: application
+      AI_QC_REAL_API_ENABLED: "false"
+      AI_QC_OUTBOUND_TEST_APPROVED: "false"
+      AI_QC_REAL_DATA_ENABLED: "false"
+      AI_QC_REAL_DATA_OUTBOUND_APPROVED: "false"
+      AI_QC_AUTO_MONITOR_ENABLED: "false"
+      AI_QC_MANUAL_REAL_TEST_ENABLED: "false"
+      AI_QC_MANUAL_RETENTION_ENABLED: "false"
+      AI_QC_OPENAI_REMOVED: "true"
+      AI_QC_VAULT_ROOTS_BY_TENANT: '{"a236afea-cc9c-4de8-81c0-ee5923385b2e":["/run/aiqc/obsidian"]}'
+    volumes:
+      - type: bind
+        source: C:/Users/ADMIN/Downloads/ZALO_CRM_AI_BRAIN
+        target: /run/aiqc/obsidian
+        read_only: true

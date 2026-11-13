@@ -52,6 +52,7 @@ export async function seedDefaultPermissionGroups(orgId: string): Promise<SeedRe
  */
 export async function migrateLegacyUsersToPermissionGroups(orgId: string): Promise<{
   ownerCount: number;
+  ownerUnchangedCount: number;
   adminCount: number;
   memberCount: number;
 }> {
@@ -65,13 +66,11 @@ export async function migrateLegacyUsersToPermissionGroups(orgId: string): Promi
     throw new Error('Default groups chưa seed — chạy seedDefaultPermissionGroups() trước');
   }
 
-  // Migrate: owner → Admin, admin → CEO, member → Sale
+  // Map subordinate legacy roles to default groups. Owner stays unassigned and
+  // uses the role bypass so no seed action assigns rights back to the caller.
   // Chỉ update user chưa có permission_group_id (idempotent)
-  const [ownerRes, adminRes, memberRes] = await Promise.all([
-    prisma.user.updateMany({
-      where: { orgId, role: 'owner', permissionGroupId: null },
-      data: { permissionGroupId: adminGrp.id },
-    }),
+  const [ownerUnchangedCount, adminRes, memberRes] = await Promise.all([
+    prisma.user.count({ where: { orgId, role: 'owner', permissionGroupId: null } }),
     prisma.user.updateMany({
       where: { orgId, role: 'admin', permissionGroupId: null },
       data: { permissionGroupId: ceoGrp.id },
@@ -83,7 +82,9 @@ export async function migrateLegacyUsersToPermissionGroups(orgId: string): Promi
   ]);
 
   return {
-    ownerCount: ownerRes.count,
+    // Owners use the role bypass and must never assign a permission group to themselves.
+    ownerCount: 0,
+    ownerUnchangedCount,
     adminCount: adminRes.count,
     memberCount: memberRes.count,
   };

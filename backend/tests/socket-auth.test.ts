@@ -18,6 +18,11 @@ const prismaMock = {
 };
 
 vi.mock('../src/shared/database/prisma-client.js', () => ({ prisma: prismaMock }));
+vi.mock('../src/config/index.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/config/index.js')>();
+  return { ...actual, config: { ...actual.config, jwtSecret: 'synthetic-session-test-key-not-production' } };
+});
+const { credentialVersion } = await import('../src/modules/auth/credential-version.js');
 
 // Import AFTER mocks are registered
 const { registerSocketAuth, socketIdentity } = await import('../src/shared/socket-auth.js');
@@ -69,11 +74,12 @@ function buildZaloHandlers(socket: ReturnType<typeof fakeSocket>) {
   return events;
 }
 
-const validPayload = { id: USER_A, email: 'a@example.com', role: 'owner', orgId: ORG_A };
+const validPayload = { id: USER_A, email: 'a@example.com', role: 'owner', orgId: ORG_A,
+  credentialVersion: credentialVersion(USER_A, 'synthetic-socket-password-hash') };
 
 beforeEach(() => {
   prismaMock.zaloAccount.findFirst.mockReset();
-  prismaMock.user.findUnique.mockResolvedValue({ id: USER_A, orgId: ORG_A, role: 'owner', isActive: true });
+  prismaMock.user.findUnique.mockResolvedValue({ id: USER_A, orgId: ORG_A, role: 'owner', isActive: true, passwordHash: 'synthetic-socket-password-hash' });
 });
 
 describe('registerSocketAuth — handshake', () => {
